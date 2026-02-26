@@ -69,6 +69,7 @@ let quantizationOptions = {
     dither: Dither.Off,
     ditherWeight: 0.5,
     ditherPattern: DitherPattern.Diagonal4,
+    toMDChannel: true
 };
 onmessage = function (event) {
     updateProgress(0);
@@ -154,7 +155,7 @@ function quantizeImage(image) {
     }
     else {
         for (let i = 0; i < image.data.length; i++) {
-            reducedImageData.data[i] = toNbit(image.data[i], quantizationOptions.bitsPerChannel);
+            reducedImageData.data[i] = toNbit(image.data[i], quantizationOptions.bitsPerChannel, quantizationOptions.toMDChannel);
         }
     }
     const tiles = extractTiles(reducedImageData);
@@ -200,13 +201,13 @@ function quantizeImage(image) {
     updateProgress(prog[0] / quantizationOptions.numPalettes);
     updatePalettes(palettes, false);
     if (showProgress)
-        updateQuantizedImage(quantizeTiles(palettes, reducedImageData, false));
+        updateQuantizedImage(quantizeTiles(palettes, reducedImageData, false, quantizationOptions.toMDChannel));
     for (let numColors = startIndex; numColors <= endIndex; numColors++) {
         expandPalettesByOneColor(palettes, tiles, pixels, randomShuffle);
         updateProgress((prog[0] * numColors) / quantizationOptions.colorsPerPalette);
         updatePalettes(palettes, false);
         if (showProgress)
-            updateQuantizedImage(quantizeTiles(palettes, reducedImageData, false));
+            updateQuantizedImage(quantizeTiles(palettes, reducedImageData, false, quantizationOptions.toMDChannel));
     }
     let minMse = meanSquareErr(palettes, tiles);
     let minPalettes = structuredClone(palettes);
@@ -225,10 +226,10 @@ function quantizeImage(image) {
         updatePalettes(palettes, false);
         if (showProgress) {
             if (useMin && i === replaceIterations - 1) {
-                updateQuantizedImage(quantizeTiles(minPalettes, reducedImageData, false));
+                updateQuantizedImage(quantizeTiles(minPalettes, reducedImageData, false, quantizationOptions.toMDChannel));
             }
             else {
-                updateQuantizedImage(quantizeTiles(palettes, reducedImageData, false));
+                updateQuantizedImage(quantizeTiles(palettes, reducedImageData, false, quantizationOptions.toMDChannel));
             }
         }
         console.log("MSE: " + mse.toFixed(0));
@@ -238,7 +239,7 @@ function quantizeImage(image) {
         palettes = minPalettes;
     }
     if (!useDither)
-        palettes = reducePalettes(palettes, quantizationOptions.bitsPerChannel);
+        palettes = reducePalettes(palettes, quantizationOptions.bitsPerChannel, quantizationOptions.toMDChannel);
     const finalIterations = iterations * 10;
     let nextUpdate = iterations;
     for (let iteration = 0; iteration < finalIterations; iteration++) {
@@ -255,26 +256,26 @@ function quantizeImage(image) {
     updateProgress(prog[2]);
     updatePalettes(palettes, false);
     if (!useDither) {
-        palettes = reducePalettes(palettes, quantizationOptions.bitsPerChannel);
+        palettes = reducePalettes(palettes, quantizationOptions.bitsPerChannel, quantizationOptions.toMDChannel);
         for (let i = 0; i < 3; i++) {
             palettes = kMeans(palettes, tiles);
             updateProgress(prog[2] + ((prog[3] - prog[2]) * (i + 1)) / 3);
             updatePalettes(palettes, false);
         }
     }
-    palettes = reducePalettes(palettes, quantizationOptions.bitsPerChannel);
+    palettes = reducePalettes(palettes, quantizationOptions.bitsPerChannel, quantizationOptions.toMDChannel);
     updatePalettes(palettes, true);
-    updateQuantizedImage(quantizeTiles(palettes, reducedImageData, useDither));
+    updateQuantizedImage(quantizeTiles(palettes, reducedImageData, useDither, quantizationOptions.toMDChannel));
     console.log("> MSE: " + meanSquareError(palettes, tiles).toFixed(2));
     console.log(`> Time: ${((performance.now() - t0) / 1000).toFixed(2)} sec`);
 }
-function reducePalettes(palettes, bitsPerChannel) {
+function reducePalettes(palettes, bitsPerChannel, toMDChannel) {
     const result = [];
     for (const palette of palettes) {
         const pal = [];
         for (const color of palette) {
             const col = cloneColor(color);
-            toNbitColor(col, bitsPerChannel);
+            toNbitColor(col, bitsPerChannel, toMDChannel);
             pal.push(col);
         }
         result.push(pal);
@@ -775,7 +776,7 @@ function getClosestColorDither(palette, pixel) {
             brightness: brightness(minColor),
         });
         copyColor(reducedColor, minColor);
-        toNbitColor(reducedColor, quantizationOptions.bitsPerChannel);
+        toNbitColor(reducedColor, quantizationOptions.bitsPerChannel, quantizationOptions.toMDChannel);
         toLinearColor(reducedColor);
         addColor(error, linearPixel);
         subtractColor(error, reducedColor);
@@ -921,7 +922,7 @@ function extractAllPixels(tiles) {
     }
     return pixels;
 }
-function quantizeTiles(palettes, image, useDither) {
+function quantizeTiles(palettes, image, useDither, toMDChannel) {
     const { tileWidth, tileHeight, bitsPerChannel, colorZeroBehaviour, colorZeroValue, numPalettes, colorsPerPalette, } = quantizationOptions;
     const imageIsReduced = quantizationOptions.dither !== Dither.Off;
     let adjustedIndex = 0;
@@ -932,14 +933,14 @@ function quantizeTiles(palettes, image, useDither) {
     const reducedPalettes = structuredClone(palettes);
     for (const pal of reducedPalettes) {
         for (const color of pal) {
-            toNbitColor(color, bitsPerChannel);
+            toNbitColor(color, bitsPerChannel, toMDChannel);
         }
     }
     const transparentColor = cloneColor(colorZeroValue);
     if (imageIsReduced)
-        toNbitColor(transparentColor, bitsPerChannel);
+        toNbitColor(transparentColor, bitsPerChannel, toMDChannel);
     const colorZero = cloneColor(colorZeroValue);
-    toNbitColor(colorZero, bitsPerChannel);
+    toNbitColor(colorZero, bitsPerChannel, toMDChannel);
     const bmpWidth = Math.ceil(image.width / 4) * 4;
     const quantizedImage = {
         width: image.width,
@@ -1208,15 +1209,25 @@ function clampColor(color, minValue, maxValue) {
 }
 // alpha = 255 / (2 ** n - 1)
 const alphaValues = [0, 255, 85, 36.42857, 17, 8.22581, 4.04762, 2.00787, 1];
-function toNbit(value, n) {
+function toNbit(value, n, toMDChannel) {
     const alpha = alphaValues[n];
-    return Math.round(Math.round(value / alpha) * alpha);
+    const rounded = Math.round(Math.round(value / alpha) * alpha);
+    if (toMDChannel) {
+        return toMegaDriveChannel(rounded);
+    }
+    return rounded;
 }
-function toNbitColor(color, n) {
+function toNbitColor(color, n, toMDChannel) {
     for (let i = 0; i < 3; i++) {
-        color[i] = toNbit(color[i], n);
+        color[i] = toNbit(color[i], n, toMDChannel);
     }
 }
+function toMegaDriveChannel(num) {
+  // map 0–255 -> 0–7, then to 0x00..0xEE
+  const level = Math.round(num / 255 * 7);
+  return level * 0x22;
+}
+
 function moveColorCloser(color, pixelColor, alpha) {
     for (let i = 0; i < color.length; i++) {
         color[i] = (1 - alpha) * color[i] + alpha * pixelColor[i];

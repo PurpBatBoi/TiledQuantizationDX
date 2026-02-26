@@ -6,6 +6,7 @@ const numPalettesInput = document.getElementById("palette_num");
 const colorsPerPaletteInput = document.getElementById("colors_per_palette");
 const bitsPerChannelInput = document.getElementById("bits_per_channel");
 const fractionOfPixelsInput = document.getElementById("fraction_of_pixels");
+const toMDChannelInput = document.getElementById("to_MD_channel");
 const integerInputs = [
     [tileWidthInput, 8],
     [tileHeightInput, 8],
@@ -200,7 +201,8 @@ function quantizeSourceImage(sourceImage) {
     const ditherMethod = selectedValue(ditherButtons, ditherValues);
     const ditherPattern = selectedValue(ditherPatternButtons, ditherPatternValues);
     const colorZeroAbbreviation = selectedValue(indexZeroButtons, colorZeroAbbreviations);
-    const settingsStr = `-${tileWidthInput.value}x${tileHeightInput.value}-${numPalettesInput.value}p${colorsPerPaletteInput.value}c-${colorZeroAbbreviation}`;
+    const toMDChannel = toMDChannelInput.checked;
+    const settingsStr = `${toMDChannel?"-MD":""}-${tileWidthInput.value}x${tileHeightInput.value}-${numPalettesInput.value}p${colorsPerPaletteInput.value}c-${colorZeroAbbreviation}`;
     const totalPaletteColors = parseInt(numPalettesInput.value, radix) *
         parseInt(colorsPerPaletteInput.value, radix);
     
@@ -284,6 +286,7 @@ function quantizeSourceImage(sourceImage) {
             dither: ditherMethod,
             ditherWeight: parseFloat(ditherWeightInput.value),
             ditherPattern: ditherPattern,
+            toMDChannel: toMDChannel
         },
     });
 }
