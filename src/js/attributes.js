@@ -22,6 +22,9 @@ const gridOpacity = document.getElementById("grid_opacity");
 const paletteGrid = document.getElementById("palette_grid");
 const paletteTool = document.getElementById("tool_palette");
 const priorityTool = document.getElementById("tool_priority");
+const brushSize8Input = document.getElementById("brush_size_8");
+const brushSize16Input = document.getElementById("brush_size_16");
+const brushSizeControls = document.getElementById("brush_size_controls");
 const pngPriorityNote = document.getElementById("png_priority_note");
 const downloadButton = document.getElementById("download_button");
 const attributeFormat = document.getElementById("attribute_format");
@@ -42,6 +45,8 @@ let priority = null;
 let prioritySupported = true;
 let tool = "palette";
 let priorityStrokeValue = 1;
+let priorityStrokeStarted = false;
+let brushSize = TILE_SIZE;
 let columns = 4;
 let rows = 8;
 let blockSize = 8;
@@ -64,6 +69,16 @@ let spaceHeld = false;
 function setStatus(text, isError) {
     editorStatus.textContent = text;
     editorStatus.className = isError ? "result-warning" : "";
+}
+
+function setBrushSize(input, size) {
+    if (!input.checked) {
+        input.checked = true;
+        return;
+    }
+    brushSize = size;
+    brushSize8Input.checked = size === TILE_SIZE;
+    brushSize16Input.checked = size === TILE_SIZE * 2;
 }
 
 // What the hardware shows: with a shared color 0, every palette's color 0 displays as palette 0's.
@@ -137,6 +152,7 @@ function applyLayout() {
     prioritySupported = system.priority;
     fineAttributes.closest("tr").hidden = system.block === TILE_SIZE;
     blockSize = fineAttributes.checked ? TILE_SIZE : system.block;
+    brushSizeControls.hidden = blockSize !== TILE_SIZE;
     activeRow = Math.min(activeRow, rows - 1);
     renderPalette();
     attributes = null;
@@ -333,7 +349,7 @@ function updateStatus() {
 
 function assignBlock(block) {
     if (attributes[block] === activeRow && !mixed[block]) {
-        return;
+        return false;
     }
     recordStroke();
     attributes[block] = activeRow;
@@ -341,23 +357,21 @@ function assignBlock(block) {
     forEachBlockPixel(block, (pixel) => {
         image.indexes[pixel] = activeRow * columns + (image.indexes[pixel] % columns);
     });
-    renderImage();
-    drawCanvas();
-    updateStatus();
+    return true;
 }
 
 // A stroke that starts on a priority tile clears priority, otherwise it sets it.
 function assignPriority(tile) {
-    if (!strokeRecorded) {
+    if (!priorityStrokeStarted) {
         priorityStrokeValue = priority[tile] ? 0 : 1;
+        priorityStrokeStarted = true;
     }
     if (priority[tile] === priorityStrokeValue) {
-        return;
+        return false;
     }
     recordStroke();
     priority[tile] = priorityStrokeValue;
-    drawCanvas();
-    updatePriorityControls();
+    return true;
 }
 
 function canvasPoint(event) {
@@ -372,19 +386,45 @@ function paintAt(event) {
     if (attributes === null) {
         return;
     }
-    const cell = tool === "priority" ? TILE_SIZE : blockSize;
     const [canvasX, canvasY] = canvasPoint(event);
-    const x = Math.floor((canvasX - offsetX) / zoom / cell);
-    const y = Math.floor((canvasY - offsetY) / zoom / cell);
-    const cellsX = Math.ceil(image.width / cell);
-    if (x < 0 || y < 0 || x >= cellsX || y >= Math.ceil(image.height / cell)) {
+    const imageX = Math.floor((canvasX - offsetX) / zoom);
+    const imageY = Math.floor((canvasY - offsetY) / zoom);
+    if (imageX < 0 || imageY < 0 || imageX >= image.width || imageY >= image.height) {
         return;
     }
+    const left = Math.floor(imageX / brushSize) * brushSize;
+    const top = Math.floor(imageY / brushSize) * brushSize;
+    let changed = false;
     if (tool === "priority") {
-        assignPriority(y * cellsX + x);
+        const tilesX = Math.ceil(image.width / TILE_SIZE);
+        const right = Math.min(left + brushSize, image.width);
+        const bottom = Math.min(top + brushSize, image.height);
+        for (let y = Math.floor(top / TILE_SIZE); y < Math.ceil(bottom / TILE_SIZE); y++) {
+            for (let x = Math.floor(left / TILE_SIZE); x < Math.ceil(right / TILE_SIZE); x++) {
+                changed = assignPriority(y * tilesX + x) || changed;
+            }
+        }
     }
     else {
-        assignBlock(y * cellsX + x);
+        const blocksX = Math.ceil(image.width / blockSize);
+        const right = Math.min(left + brushSize, image.width);
+        const bottom = Math.min(top + brushSize, image.height);
+        for (let y = Math.floor(top / blockSize); y < Math.ceil(bottom / blockSize); y++) {
+            for (let x = Math.floor(left / blockSize); x < Math.ceil(right / blockSize); x++) {
+                changed = assignBlock(y * blocksX + x) || changed;
+            }
+        }
+    }
+    if (changed) {
+        if (tool === "priority") {
+            drawCanvas();
+            updatePriorityControls();
+        }
+        else {
+            renderImage();
+            drawCanvas();
+            updateStatus();
+        }
     }
 }
 
@@ -447,6 +487,7 @@ canvas.addEventListener("pointerdown", (event) => {
     }
     else if (event.button === 0) {
         strokeRecorded = false;
+        priorityStrokeStarted = false;
         paintAt(event);
     }
 });
@@ -590,6 +631,8 @@ zoomInput.addEventListener("change", () => {
 gridVisible.addEventListener("change", drawCanvas);
 paletteTool.addEventListener("click", () => setTool("palette"));
 priorityTool.addEventListener("click", () => setTool("priority"));
+brushSize8Input.addEventListener("change", () => setBrushSize(brushSize8Input, TILE_SIZE));
+brushSize16Input.addEventListener("change", () => setBrushSize(brushSize16Input, TILE_SIZE * 2));
 gridColor.addEventListener("input", drawCanvas);
 gridOpacity.addEventListener("input", drawCanvas);
 new ResizeObserver(drawCanvas).observe(editorView);

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tile Graphics Conversion - Tiled Palette Quantization</title>
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="js/indexed-png.js" defer></script>
+  <script src="js/tiled-map.js" defer></script>
+  <script src="js/nes-attributes.js" defer></script>
+  <script src="js/graphics-conversion.js" defer></script>
+  <script src="js/graphics.js" defer></script>
+</head>
+
+<body>
+  <header>
+    <div class="main">Tile Graphics Conversion</div>
+    <div class="sub"><a href="https://github.com/PurpBatBoi">By Purps</a></div>
+    <nav class="tool-tabs">
+      <a href="index.html">Palette Quantization</a>
+      <a href="attributes.html">Attribute Editor</a>
+      <a href="graphics.html" aria-current="page">Tile Graphics Conversion</a>
+    </nav>
+  </header>
+  <div id="editor_layout">
+    <div id="sidebar">
+      <fieldset id="input_field" title="Click or drop a PNG, or a Tiled map (.tmx/.tmj) together with its tileset files. Files never leave your browser.">
+        <legend>Source Image</legend>
+        <div id="source_filename">Click or drop a PNG or Tiled map...</div>
+        <input autocomplete="off" type="file" id="image_selector" accept=".png,.tmx,.tmj,.tsx,.tsj" multiple>
+      </fieldset>
+      <fieldset>
+        <legend>Target</legend>
+        <table>
+          <tr>
+            <td>
+              <label for="system">System:</label>
+              <button type="button" class="tooltip tooltip-lines" aria-label="NES: 4 palettes of 3 colors + shared color 0.&#10;One palette per 16×16 area. Up to 256 tiles.&#10;&#10;Game Boy: 4 shades for the whole image.&#10;Up to 256 tiles.&#10;&#10;Game Boy Color: 8 palettes of 4 colors.&#10;One palette per 8×8 tile. Up to 512 tiles.&#10;Flipped copies of a tile are stored once.">?</button>
+            </td>
+            <td>
+              <select autocomplete="off" id="system">
+                <option value="nes" selected>NES</option>
+                <option value="gb">Game Boy</option>
+                <option value="gbc">Game Boy Color</option>
+              </select>
+            </td>
+          </tr>
+          <tr id="auto_shades_row" hidden>
+            <td colspan="2">
+              <input autocomplete="off" type="checkbox" id="auto_shades" checked>
+              <label for="auto_shades">Auto Shades</label>
+              <button type="button" class="tooltip tooltip-lines" aria-label="Art with more than 4 colors is grouped into the 4 shades by brightness.&#10;&#10;Art that already fits keeps its exact colors.">?</button>
+            </td>
+          </tr>
+          <tr id="shared_color_row">
+            <td colspan="2">
+              <div>
+                Color 0:
+                <button type="button" class="tooltip tooltip-lines" aria-label="All NES background palettes share color 0.&#10;&#10;Auto: the most used color.&#10;Click a swatch to pick one yourself.">?</button>
+                <button type="button" id="shared_auto" aria-pressed="true">Auto</button>
+                <span id="shared_value"></span>
+              </div>
+              <div id="shared_swatches" role="group" aria-label="NES shared color 0"></div>
+            </td>
+          </tr>
+        </table>
+      </fieldset>
+      <fieldset>
+        <legend>View</legend>
+        <table>
+          <tr>
+            <td><label for="zoom">Zoom:</label></td>
+            <td>
+              <select autocomplete="off" id="zoom">
+                <option value="fit" selected>Fit</option>
+                <option value="0.25">25%</option>
+                <option value="0.5">50%</option>
+                <option value="1">100%</option>
+                <option value="2">200%</option>
+                <option value="3">300%</option>
+                <option value="4">400%</option>
+                <option value="6">600%</option>
+                <option value="8">800%</option>
+                <option value="12">1200%</option>
+                <option value="16">1600%</option>
+                <option value="24">2400%</option>
+                <option value="32">3200%</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td><label for="grid_visible">Grid:</label></td>
+            <td><input autocomplete="off" type="checkbox" id="grid_visible" checked></td>
+          </tr>
+          <tr>
+            <td><label for="show_tile_index">Tile Index:</label></td>
+            <td><input autocomplete="off" type="checkbox" id="show_tile_index"></td>
+          </tr>
+          <tr>
+            <td><label for="show_palette_index">Palette Index:</label></td>
+            <td><input autocomplete="off" type="checkbox" id="show_palette_index"></td>
+          </tr>
+        </table>
+      </fieldset>
+      <fieldset>
+        <legend>
+          Palettes
+          <button type="button" class="tooltip tooltip-lines" id="palette_help" hidden aria-label="Click a color to touch it up from the NES palette.&#10;&#10;Tiles keep their color indexes; only the color changes.&#10;Color 0 is shared, so it changes in every palette.&#10;&#10;Edits reset when the image is converted again.">?</button>
+        </legend>
+        <table id="palette_grid"></table>
+        <button type="button" id="palette_reset" hidden>Reset Palette Edits</button>
+      </fieldset>
+      <fieldset>
+        <legend>Result</legend>
+        <div id="graphics_stats"></div>
+        <ul id="graphics_diagnostics"></ul>
+      </fieldset>
+      <fieldset>
+        <legend>Selection</legend>
+        <div id="selection_info">Click a tile, or focus a view and use the arrow keys.</div>
+      </fieldset>
+      <fieldset>
+        <legend>Downloads</legend>
+        <div id="download_list"></div>
+      </fieldset>
+      <div id="graphics_status" class="visually-hidden" role="status" aria-live="polite"></div>
+    </div>
+    <div id="graphics_views">
+      <fieldset>
+        <legend>
+          Tileset Map Preview
+          <button type="button" class="tooltip tooltip-lines tooltip-below" aria-label="Your image rebuilt from the converted tiles and palettes, as the hardware would draw it.&#10;&#10;Matches the source: the .chr and .pal are correct.&#10;Red outlines: areas that failed.&#10;&#10;Click a tile to select it. Yellow shows its other uses.&#10;Wheel: zoom. Middle-drag or Space + drag: pan.">?</button>
+        </legend>
+        <div class="graphics-view"><canvas id="map_canvas" tabindex="0" aria-label="Tileset map preview: the image rebuilt from the converted tiles. Arrow keys move the selected tile." width="0" height="0"></canvas></div>
+      </fieldset>
+      <fieldset>
+        <legend>
+          Tileset
+          <button type="button" class="tooltip tooltip-lines tooltip-below" aria-label="Every unique tile, as stored in the .chr. Each is shown in the palette of its first use.&#10;&#10;Click a tile to select it and see where it is used.&#10;Wheel: zoom. Middle-drag or Space + drag: pan.">?</button>
+        </legend>
+        <div class="graphics-view tileset-view"><canvas id="tileset_canvas" tabindex="0" aria-label="Deduplicated tileset. Arrow keys move the selected tile." width="0" height="0"></canvas></div>
+      </fieldset>
+    </div>
+  </div>
+  <dialog id="nes_color_dialog">
+    <form method="dialog">
+      <p id="nes_color_title"></p>
+      <div id="nes_color_grid" role="group" aria-label="NES palette"></div>
+      <div class="dialog-buttons">
+        <button value="reset">Reset</button>
+        <button value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="layer_dialog">
+    <form method="dialog">
+      <p>This map has several tile layers.<br>Pick the layer to convert:</p>
+      <select id="layer_select" autocomplete="off"></select>
+      <div class="dialog-buttons">
+        <button value="cancel">Cancel</button>
+        <button value="ok">Convert Layer</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

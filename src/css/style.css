@@ -59,6 +59,7 @@ img, canvas {
 }
 
 .tooltip::after {
+  box-sizing: border-box;
   content: attr(aria-label);
   visibility: hidden;
   position: absolute;
@@ -76,11 +77,24 @@ img, canvas {
   font-weight: normal;
   line-height: 1.35;
   text-align: left;
-  white-space: normal;
+  /* Line breaks (&#10;) in the label split it into short lines. */
+  white-space: pre-line;
   opacity: 0;
   pointer-events: none;
   transform: translateX(-50%);
   transition: opacity 0.15s ease;
+}
+
+/* Labels written as short lines: the bubble fits its longest line instead of wrapping at 18rem. */
+.tooltip.tooltip-lines::after {
+  width: max-content;
+  max-width: min(24rem, calc(100vw - 2rem));
+}
+
+/* Opens downward, for tooltips near the top of the page. */
+.tooltip.tooltip-below::after {
+  top: calc(100% + 0.5rem);
+  bottom: auto;
 }
 
 .tooltip:hover::after,
@@ -339,6 +353,34 @@ fieldset > legend {
   display: none;
 }
 
+#brush_size_controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
+#brush_size_controls[hidden] {
+  display: none;
+}
+
+#brush_size_controls > span,
+#brush_size_controls > label {
+  color: #ccc;
+  font-size: 0.75rem;
+}
+
+#brush_size_controls > label {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+#brush_size_controls input {
+  margin: 0;
+}
+
 #tool_buttons svg {
   width: 1.5rem;
   height: 1.5rem;
@@ -361,7 +403,8 @@ fieldset > legend {
   cursor: grabbing;
 }
 
-#layer_dialog {
+#layer_dialog,
+#nes_color_dialog {
   color: white;
   background: #222;
   border: 1px solid #444;
@@ -369,7 +412,8 @@ fieldset > legend {
   padding: 1.5rem;
 }
 
-#layer_dialog::backdrop {
+#layer_dialog::backdrop,
+#nes_color_dialog::backdrop {
   background: #000a;
 }
 
@@ -378,7 +422,8 @@ fieldset > legend {
   margin: 0.5rem 0 1.5rem;
 }
 
-#layer_dialog .dialog-buttons {
+#layer_dialog .dialog-buttons,
+#nes_color_dialog .dialog-buttons {
   display: flex;
   justify-content: flex-end;
   gap: 1rem;
@@ -406,9 +451,11 @@ header .main {
   font-variant: small-caps;
 }
 
-/* Switches between the two tools; the current page is the light tab. */
+/* Switches between the tools; the current page is the light tab. */
 .tool-tabs {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 0.5rem;
   margin-top: 0.5rem;
 }
@@ -431,4 +478,218 @@ header .main {
   background: #f0f0f0;
   border-color: #f0f0f0;
   color: #111;
+}
+
+
+/* GRAPHICS CONVERSION */
+
+#graphics_views {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  min-width: 0;
+}
+
+#graphics_views > fieldset {
+  min-width: 0;
+  margin: 0;
+}
+
+/* Pan/zoom viewports like the Attribute Editor's: the canvas fills the view, the image floats on it. */
+.graphics-view {
+  display: flex;
+  height: max(20rem, calc(100vh - 30rem));
+  overflow: hidden;
+  border-radius: 0.5rem;
+}
+
+.graphics-view.tileset-view {
+  height: 16rem;
+}
+
+.graphics-view canvas {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.graphics-view canvas.grab {
+  cursor: grab;
+}
+
+.graphics-view canvas.panning {
+  cursor: grabbing;
+}
+
+.graphics-view canvas:focus-visible {
+  outline: 2px solid white;
+  outline-offset: -2px;
+}
+
+#shared_color_row[hidden],
+#auto_shades_row[hidden] {
+  display: none;
+}
+
+#shared_swatches {
+  display: grid;
+  grid-template-columns: repeat(16, minmax(0, 1rem));
+  gap: 1px;
+  margin-top: 0.5rem;
+}
+
+#shared_swatches > button {
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid #000;
+  cursor: pointer;
+}
+
+#shared_swatches > button:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+
+#shared_swatches > button[aria-pressed="true"],
+#shared_swatches > button:focus-visible {
+  position: relative;
+  outline: 2px solid white;
+}
+
+#shared_auto[aria-pressed="true"] {
+  outline: 2px solid white;
+}
+
+/* NES palette slots are buttons: click to touch up the color. */
+#palette_grid button.swatch {
+  display: block;
+  padding: 0;
+  cursor: pointer;
+}
+
+#palette_grid button.swatch:hover,
+#palette_grid button.swatch:focus-visible {
+  outline: 2px solid white;
+}
+
+/* An edited slot: a dot in the corner. */
+#palette_grid button.swatch.edited {
+  background-image: radial-gradient(circle at 80% 20%, #fff 0 18%, #000 19% 28%, transparent 29%) !important;
+}
+
+#palette_reset {
+  margin-top: 0.5rem;
+}
+
+#palette_reset[hidden],
+#palette_help[hidden] {
+  display: none;
+}
+
+#nes_color_dialog p {
+  margin-top: 0;
+}
+
+#nes_color_grid {
+  display: grid;
+  grid-template-columns: repeat(16, 1.5rem);
+  gap: 2px;
+  margin-bottom: 1.5rem;
+}
+
+#nes_color_grid > button {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid #000;
+  cursor: pointer;
+}
+
+#nes_color_grid > button:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+
+#nes_color_grid > button[aria-pressed="true"],
+#nes_color_grid > button:hover,
+#nes_color_grid > button:focus-visible {
+  outline: 2px solid white;
+  position: relative;
+}
+
+.palette-values {
+  padding-left: 0.5rem;
+  font-family: monospace;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+#graphics_stats,
+#selection_info,
+#graphics_diagnostics {
+  max-width: 16rem;
+  font-size: 0.9rem;
+}
+
+#graphics_diagnostics {
+  margin: 0.5rem 0 0;
+  padding-left: 1rem;
+  color: #ffd27f;
+}
+
+#graphics_diagnostics:empty {
+  display: none;
+}
+
+#graphics_diagnostics .diagnostic-hint {
+  margin-top: 0.25rem;
+  color: #ccc;
+}
+
+#graphics_diagnostics a {
+  text-decoration: underline;
+}
+
+#selection_info dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+}
+
+#selection_info dt {
+  opacity: 0.6;
+}
+
+#selection_info dd {
+  margin: 0;
+  font-family: monospace;
+  word-break: break-word;
+}
+
+#download_list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+#download_list > button {
+  padding: 0.5rem;
+  font-size: 100%;
+  text-align: left;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

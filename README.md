@@ -1,9 +1,10 @@
 # Tiled Palette Quantization++
 
-A fork of [Selbi's Mega Drive fork](https://github.com/Selbi182/tiledpalettequant) of [rilden's Tiled Palette Quant web tool](https://rilden.github.io/tiledpalettequant), with two tools:
+A fork of [Selbi's Mega Drive fork](https://github.com/Selbi182/tiledpalettequant) of [rilden's Tiled Palette Quant web tool](https://rilden.github.io/tiledpalettequant), with three tools:
 
 - **Palette Quantization** (`src/index.html`): the original quantizer, tuned for retro-console art.
 - **Attribute Editor** (`src/attributes.html`): paint which palette each tile uses on an indexed image or a Tiled map, then export attribute data for NES, NES MMC5 or Game Boy Color.
+- **Graphics Conversion** (`src/graphics.html`): turn finished PNG background art or a Tiled map layer into NES, Game Boy or Game Boy Color tile (`.chr`) and palette (`.pal`) files.
 
 Switch between them with the tabs under the page title.
 
@@ -17,7 +18,7 @@ It's a static site with no build step. Serve `src/` with any web server, for exa
 python -m http.server -d src
 ```
 
-Then open http://localhost:8000/. The quantizer uses a Web Worker, which Chromium browsers (Chrome, Edge) block on `file://` pages. Opening the HTML file directly works for the Attribute Editor but not for quantizing.
+Then open http://localhost:8000/. The quantizer uses a Web Worker, which Chromium browsers (Chrome, Edge) block on `file://` pages. Opening the HTML file directly works for the Attribute Editor but not for quantizing. Graphics Conversion also uses a worker, but falls back to converting on the page when the worker is blocked.
 
 Tests use Node's built-in runner:
 
@@ -56,6 +57,67 @@ C exports are `.c` source files, and the first comment line gives the `extern` d
 | Game Boy Color | Binary, C, C + RLE / GB (GBTD) / ZX0 (GBDK), ASM for GBDK (sdas), ASM for RGBDS | BG map attributes: one byte per tile, palette in bits 0-2, priority in bit 7 |
 
 
+## Graphics Conversion
+
+Converts PNG background art into hardware data, entirely in the browser. Apart from Game Boy Auto Shades, it never reduces colors itself: art over a limit is explained and outlined in red, and every download stays disabled until the conversion succeeds.
+
+### Workflow
+
+1. **Palette Quantization:** reduce the art to the target's palette layout, for example 4 palettes of 4 colors in 16×16 tiles for NES, or 8 palettes of 4 colors in 8×8 tiles for Game Boy Color.
+2. **Attribute Editor** (optional): fix which palette each block uses, then download the indexed PNG.
+3. **Graphics Conversion:** load the PNG or Tiled map, pick the target, check the Tileset Map Preview and tileset, then download the files.
+
+### Targets
+
+| Target | Colors | Tiles | Flipped tiles |
+|---|---|---|---|
+| NES | Nearest color from the palgen NES palette. 4 palettes of 3 colors per 16×16 block, plus a shared color 0 | 256 | Not reused (standard nametables can't flip) |
+| Game Boy | 4 colors in the whole image, ordered light to dark over the 4 DMG shades. Auto Shades handles art with more | 256 | Not reused |
+| Game Boy Color | Rounded to RGB555. 8 palettes of 4 colors per 8×8 tile | 512 (tiles 256+ use VRAM bank 1) | Reused through the attribute flip bits |
+
+- **NES color 0:** Auto picks the most used opaque color. Click a swatch to force a different one.
+- **NES palette touch-up:** after converting, click any color in the Palettes panel and pick a replacement from the NES palette. Tiles keep their color indexes; only the color changes, in the previews and in the `.pal`. Color 0 is shared, so editing it changes every palette. Edited colors get a corner dot, and each can be reset from its popup or all at once with Reset Palette Edits. Edits clear when the image is converted again (new file, target or Color 0 choice).
+- **Game Boy Auto Shades** (on by default): art with more than 4 colors, or indexed art using entries past 3, is grouped into the 4 shades by brightness instead of being rejected. The split into shades gives each shade the colors closest in brightness, weighted by pixel count, so large areas keep their detail. Art that already fits keeps its exact colors. Turn it off to get the error instead.
+- **Tiled maps:** select the `.tmx`/`.tmj` together with its `.tsx`/`.tsj` tileset and the indexed tileset `.png`, as in the Attribute Editor. Maps with several tile layers ask which layer to convert. The layer is flattened (Tiled flips included) and converted like an indexed PNG, so file names get the layer name, for example `level_Ground.chr`.
+- **Indexed PNGs:** keep their palettes. Entries 0-3 are palette 0, entries 4-7 are palette 1 and so on, with their order and any duplicate entries. Each tile keeps the palette its pixels use.
+- **Other PNGs:** palettes are built in scan order. Each block's colors join the first palette they fit in.
+
+### Input rules
+
+- Width and height must be multiples of 8.
+- Pixels must be fully opaque or fully transparent. Transparent pixels become color index 0:
+  - Indexed PNGs keep that palette entry's RGB.
+  - Other PNGs use the NES shared color, DMG shade 0, or black on Game Boy Color.
+
+### Views
+
+- **Tileset Map Preview:** the image rebuilt from the tileset. When conversion fails, it shows the art in the nearest hardware colors, with invalid areas outlined in red.
+- **Tileset:** the deduplicated tiles.
+
+Both views zoom and pan like the Attribute Editor. The mouse wheel zooms around the cursor, and middle-drag or Space + drag pans. The Zoom list sets both views, and Fit shows the whole image. A new image starts at Fit.
+
+Click a tile, or focus a view and use the arrow keys, to select it. A view pans to bring the selection on screen. Every view then highlights the selection and all other uses of the same tile. The sidebar shows the tile's index, palette, position, bank and flip flags, and its packed bytes.
+
+### Downloads
+
+Graphics only, as plain binary files named after the source image, for example `title.png` gives `title.chr` and `title.pal`. The map and attributes are shown for checking but not exported.
+
+| File | NES | Game Boy | Game Boy Color |
+|---|---|---|---|
+| `<name>.chr` | Planar 2bpp tiles padded to a 4 KB pattern table (256 tiles), as NEXXT and YYCHR load it | Interleaved 2bpp tiles, unpadded | Interleaved 2bpp tiles, unpadded (tiles 256+ go to VRAM bank 1) |
+| `<name>.pal` | 16 bytes: the 4 background palettes as PPU colors (NEXXT's format), unused palettes filled with color 0 | 1 byte: the BGP register value | The used palettes as little-endian RGB555, 8 bytes each (rgbgfx's `.pal`) |
+
+### Where the rules come from
+
+The rules are reimplemented, not bundled, from GBDK-2020's tools:
+
+- **NES colors:** from `nespal`. Nearest palgen color, skipping nespal's default invalid colors. Where colors look identical, black is `$0F` and white `$30`: neslib's `pal_bg` turns `$1D` into gray `$00` and `$20` into light gray `$10`. neslib also remaps the grays `$2D`/`$3D` to `$10`/`$20`.
+- **Everything else:** from `png2asset`. That covers tile packing, first-fit palette merging and the GBC attribute bits.
+- **Checked against the real tools:**
+  - Game Boy Color tiles, map, attributes and palettes match `png2asset -map -use_map_attributes` byte for byte on a test image.
+  - Game Boy tiles and map match `png2asset -map -noflip`.
+  - NES output differs from `png2asset`, which doesn't treat color 0 as shared.
+
 ## Differences to the [original version](https://github.com/rilden/tiledpalettequant)
 
 - Quantization:
@@ -75,7 +137,8 @@ C exports are `.c` source files, and the first comment line gives the `extern` d
   - Added cancellation for long-running quantization while retaining the partial result and applying the selected dithering
   - Disabled autocomplete for all inputs
   - Dereference image loading to avoid quirks with client-side width/height adjustments
-  - Added the Attribute Editor, with tabs to switch between the two tools
+  - Added the Attribute Editor, with tabs to switch between the tools
+  - Added the Graphics Conversion tool
 - Project:
   - Restructured original folder layout
   - Changed [sample image](https://wallscloud.net/en/wallpaper/nature/plants/Pablo-Garcia-Saldana/pKL1)
