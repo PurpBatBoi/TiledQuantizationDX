@@ -9,10 +9,19 @@
   <link rel="stylesheet" href="css/style.css">
   <script src="js/enums.js" defer></script>
   <script src="js/worker.js" defer></script>
+  <script src="js/indexed-png.js" defer></script>
   <script src="js/script.js" defer></script>
 </head>
 
 <body>
+  <header>
+    <div class="main">Tiled Palette Quantization++</div>
+    <div class="sub"><a href="https://rilden.github.io/tiledpalettequant">Original version by riled</a> &bull; <a href="https://github.com/Selbi182/tiledpalettequant">OG Fork by Selbi</a> &bull; <a href="https://github.com/PurpBatBoi">Fork by Purps</a></div>
+    <nav class="tool-tabs">
+      <a href="index.html" aria-current="page">Palette Quantization</a>
+      <a href="attributes.html">Attribute Editor</a>
+    </nav>
+  </header>
   <div id="body">
     <fieldset id="input_field"  title="Click or drop file to change source image...">
       <legend>Source Image</legend>
@@ -24,32 +33,58 @@
       <legend>Quantization Settings</legend>
       <table>
         <tr>
-          <td><label for="tile_width">Tile Width:</label></td>
+          <td>
+            <label for="tile_width">Tile Width:</label>
+            <button type="button" class="tooltip" aria-label="Width of each tile in pixels. Every tile is assigned the palette line that best matches it.">?</button>
+          </td>
           <td><input autocomplete="off" type="number" id="tile_width" min="1" max="32" step="1" value="8"></td>
         </tr>
         <tr>
-          <td><label for="tile_height">Tile Height:</label></td>
+          <td>
+            <label for="tile_height">Tile Height:</label>
+            <button type="button" class="tooltip" aria-label="Height of each tile in pixels. Every tile is assigned the palette line that best matches it.">?</button>
+          </td>
           <td><input autocomplete="off" type="number" id="tile_height" min="1" max="32" step="1" value="8"></td>
         </tr>
         <tr>
-          <td><label for="palette_num">Palettes Lines:</label></td>
+          <td>
+            <label for="palette_num">Palette Lines:</label>
+            <button type="button" class="tooltip" aria-label="Number of separate palettes to generate. Each tile uses the closest matching palette.">?</button>
+          </td>
           <td><input autocomplete="off" type="number" id="palette_num" min="1" max="16" step="1" value="1"></td>
         </tr>
         <tr>
-          <td><label for="colors_per_palette">Colors Per Palette:</label></td>
+          <td>
+            <label for="colors_per_palette">Colors Per Palette:</label>
+            <button type="button" class="tooltip" aria-label="Maximum number of color entries in each palette. Color index 0 may be reserved by the selected index-zero behavior.">?</button>
+          </td>
           <td><input autocomplete="off" type="number" id="colors_per_palette" min="2" max="256" step="1" value="16"></td>
         </tr>
         <tr>
-          <td><label for="bits_per_channel">Bits Per Channel:</label></td>
+          <td>
+            <label for="bits_per_channel">Bits Per Channel:</label>
+            <button type="button" class="tooltip" aria-label="Bits used for each red, green, and blue channel before color-space conversion. Higher values preserve more shades.">?</button>
+          </td>
           <td><input autocomplete="off" type="number" id="bits_per_channel" min="2" max="8" step="1" value="4"></td>
         </tr>
         <tr>
-          <td><label for="fraction_of_pixels">Fraction of Pixels:</label></td>
+          <td>
+            <label for="fraction_of_pixels">Fraction of Pixels:</label>
+            <button type="button" class="tooltip" aria-label="Multiplier for randomized palette-training iterations relative to usable pixels. Higher values may improve results but take longer; 1.0 is approximately one iteration per pixel.">?</button>
+          </td>
           <td><input autocomplete="off" type="number" id="fraction_of_pixels" min="0.01" max="10" step="any" value="0.1"></td>
         </tr>
         <tr>
-          <td><label for="to_MD_channel">MD Color Space:</label></td>
-          <td><input autocomplete="off" type="checkbox" id="to_MD_channel" checked></td>
+          <td>
+            <label for="color_space">Color Space:</label>
+            <button type="button" class="tooltip" aria-label="Default uses Bits Per Channel across the full 0–255 range. Megadrive additionally maps each channel to up to 8 values from 0x00 through 0xEE.">?</button>
+          </td>
+          <td>
+            <select autocomplete="off" id="color_space">
+              <option value="default">Default</option>
+              <option value="megadrive" selected>Megadrive</option>
+            </select>
+          </td>
         </tr>
       </table>
     </fieldset>
@@ -60,19 +95,29 @@
           <td>
             <input autocomplete="off" type="radio" id="unique" name="color_zero" value="unique" checked>
             <label for="unique">Unique</label>
+            <button type="button" class="tooltip" aria-label="Each palette gets its own independently optimized opaque color at index 0.">?</button>
           </td>
         </tr>
         <tr>
           <td>
             <input autocomplete="off" type="radio" id="shared" name="color_zero" value="shared">
-            <label for="shared">Shared Color:</label>
-            <input autocomplete="off" type="color" id="shared_color" value="#000000" aria-label="shared color">
+            <label for="shared">Shared Color</label>
+            <button type="button" class="tooltip" aria-label="Samples the most frequent fully opaque source color and uses it as the fixed index 0 in every palette. Bits Per Channel and Color Space still apply.">?</button>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <input autocomplete="off" type="radio" id="specific_shared" name="color_zero" value="specific_shared">
+            <label for="specific_shared">Specific Shared Color:</label>
+            <input autocomplete="off" type="color" id="shared_color" value="#000000" aria-label="specific shared color">
+            <button type="button" class="tooltip" aria-label="Uses the selected color as a fixed index 0 in every palette. The optimizer does not change it; Bits Per Channel and Color Space still apply.">?</button>
           </td>
         </tr>
         <tr>
           <td>
             <input autocomplete="off" type="radio" id="transparent_from_transparent" name="color_zero" value="transparent_from_transparent">
             <label for="transparent_from_transparent">Transparent (from transparent pixels)</label>
+            <button type="button" class="tooltip" aria-label="Reserves index 0 for source pixels whose alpha is below 255. Those pixels are excluded from palette optimization.">?</button>
           </td>
         </tr>
         <tr>
@@ -80,6 +125,7 @@
             <input autocomplete="off" type="radio" id="transparent_from_color" name="color_zero" value="transparent_from_color">
             <label for="transparent_from_color">Transparent Color:</label>
             <input autocomplete="off" type="color" id="transparent_color" value="#ff00ff" aria-label="transparent color">
+            <button type="button" class="tooltip" aria-label="Reserves index 0 for source pixels that exactly match the selected RGB color. Those pixels are excluded from palette optimization.">?</button>
           </td>
         </tr>
       </table>
@@ -91,23 +137,29 @@
           <td>
             <input autocomplete="off" type="radio" id="dither_off" name="dither" value="dither_off" checked>
             <label for="dither_off">Disabled</label>
+            <button type="button" class="tooltip" aria-label="Maps each pixel to its nearest palette color without ordered dithering.">?</button>
           </td>
         </tr>
         <tr>
           <td>
             <input autocomplete="off" type="radio" id="dither_fast" name="dither" value="dither_fast">
             <label for="dither_fast">Fast</label>
+            <button type="button" class="tooltip" aria-label="Applies ordered dithering when rendering, using palettes optimized without dither simulation.">?</button>
           </td>
         </tr>
         <tr>
           <td>
             <input autocomplete="off" type="radio" id="dither_slow" name="dither" value="dither_slow">
             <label for="dither_slow">Slow</label>
+            <button type="button" class="tooltip" aria-label="Accounts for ordered dithering while optimizing palettes as well as rendering. Slower, but may improve dithered results.">?</button>
           </td>
         </tr>
       </table>
       <fieldset class="disableable" disabled>
-        <legend>Dither Weight</legend>
+        <legend>
+          Dither Weight
+          <button type="button" class="tooltip" aria-label="Strength of the color error used to select successive dither shades. Higher values produce stronger variation.">?</button>
+        </legend>
         <input autocomplete="off" type="number" id="dither_weight" min="0.01" max="1" step="any" value="0.5">
       </fieldset>
       <fieldset class="disableable" disabled>
@@ -117,30 +169,36 @@
             <td>
               <input autocomplete="off" type="radio" id="dither_diagonal4" name="dither_pattern" value="dither_diagonal4" checked>
               <label for="dither_diagonal4">Diagonal-4</label>
+              <button type="button" class="tooltip" aria-label="A 2×2 ordered pattern using four candidate shades arranged diagonally.">?</button>
             </td>
             <td>
               <input autocomplete="off" type="radio" id="dither_diagonal2" name="dither_pattern" value="dither_diagonal2">
               <label for="dither_diagonal2">Diagonal-2</label>
+              <button type="button" class="tooltip" aria-label="A 2×2 checkerboard pattern alternating between two candidate shades.">?</button>
             </td>
           </tr>
           <tr>
             <td>
               <input autocomplete="off" type="radio" id="dither_horizontal4" name="dither_pattern" value="dither_horizontal4">
               <label for="dither_horizontal4">Horizontal-4</label>
+              <button type="button" class="tooltip" aria-label="A 2×2 ordered pattern using four candidate shades arranged in horizontal bands.">?</button>
             </td>
             <td>
               <input autocomplete="off" type="radio" id="dither_horizontal2" name="dither_pattern" value="dither_horizontal2">
               <label for="dither_horizontal2">Horizontal-2</label>
+              <button type="button" class="tooltip" aria-label="A 2×2 pattern alternating two candidate shades by row.">?</button>
             </td>
           </tr>
           <tr>
             <td>
               <input autocomplete="off" type="radio" id="dither_vertical4" name="dither_pattern" value="dither_vertical4">
               <label for="dither_vertical4">Vertical-4</label>
+              <button type="button" class="tooltip" aria-label="A 2×2 ordered pattern using four candidate shades arranged in vertical bands.">?</button>
             </td>
             <td>
               <input autocomplete="off" type="radio" id="dither_vertical2" name="dither_pattern" value="dither_vertical2">
               <label for="dither_vertical2">Vertical-2</label>
+              <button type="button" class="tooltip" aria-label="A 2×2 pattern alternating two candidate shades by column.">?</button>
             </td>
           </tr>
         </table>
@@ -150,14 +208,11 @@
       <legend>Quantized Output</legend>    
       <div id="quantize_button_wrapper">
         <button type="button" id="quantizeButton">Quantize</button>
+        <button type="button" id="cancelButton" disabled>Cancel</button>
         <progress id="progress" max="100" value="0"></progress>
       </div>
       <div id="quantized_images"></div>
     </fieldset>
   </div>
-  <footer>
-    <div class="main">Tiled Palette Quantization (Forked)</div>
-    <div class="sub"><a href="https://rilden.github.io/tiledpalettequant">Original version by riled</a> &bull; <a href="https://github.com/Selbi182/tiledpalettequant">Forked adjustments by Selbi</a></div>
-  </footer>
 </body>
 </html>

@@ -7,14 +7,20 @@ var Action;
     Action[Action["UpdateQuantizedImage"] = 2] = "UpdateQuantizedImage";
     Action[Action["UpdatePalettes"] = 3] = "UpdatePalettes";
     Action[Action["DoneQuantization"] = 4] = "DoneQuantization";
+    Action[Action["FinishPartial"] = 5] = "FinishPartial";
 })(Action || (Action = {}));
 var ColorZeroBehaviour;
 (function (ColorZeroBehaviour) {
     ColorZeroBehaviour[ColorZeroBehaviour["Unique"] = 0] = "Unique";
     ColorZeroBehaviour[ColorZeroBehaviour["Shared"] = 1] = "Shared";
-    ColorZeroBehaviour[ColorZeroBehaviour["TransparentFromTransparent"] = 2] = "TransparentFromTransparent";
-    ColorZeroBehaviour[ColorZeroBehaviour["TransparentFromColor"] = 3] = "TransparentFromColor";
+    ColorZeroBehaviour[ColorZeroBehaviour["SpecificShared"] = 2] = "SpecificShared";
+    ColorZeroBehaviour[ColorZeroBehaviour["TransparentFromTransparent"] = 3] = "TransparentFromTransparent";
+    ColorZeroBehaviour[ColorZeroBehaviour["TransparentFromColor"] = 4] = "TransparentFromColor";
 })(ColorZeroBehaviour || (ColorZeroBehaviour = {}));
+function usesSharedColorBehaviour(colorZeroBehaviour) {
+    return colorZeroBehaviour === ColorZeroBehaviour.Shared ||
+        colorZeroBehaviour === ColorZeroBehaviour.SpecificShared;
+}
 var Dither;
 (function (Dither) {
     Dither[Dither["Off"] = 0] = "Off";
@@ -74,20 +80,26 @@ let quantizationOptions = {
 onmessage = function (event) {
     updateProgress(0);
     const data = event.data;
-    quantizationOptions = data.quantizationOptions;
+    configureQuantization(data.quantizationOptions);
+    if (data.action === Action.FinishPartial) {
+        finishPartialImage(data.imageData, data.palettes);
+    }
+    else {
+        quantizeImage(data.imageData);
+    }
+    updateProgress(100);
+    postMessage({ action: Action.DoneQuantization });
+};
+function configureQuantization(options) {
+    quantizationOptions = options;
     ditherPattern = ditherPatterns.get(quantizationOptions.ditherPattern);
     const patternPixels2 = new Set([
         DitherPattern.Diagonal2,
         DitherPattern.Horizontal2,
         DitherPattern.Vertical2,
     ]);
-    if (patternPixels2.has(quantizationOptions.ditherPattern)) {
-        ditherPixels = 2;
-    }
-    quantizeImage(data.imageData);
-    updateProgress(100);
-    postMessage({ action: Action.DoneQuantization });
-};
+    ditherPixels = patternPixels2.has(quantizationOptions.ditherPattern) ? 2 : 4;
+}
 function updateProgress(progress) {
     postMessage({ action: Action.UpdateProgress, progress: progress });
 }
@@ -105,7 +117,7 @@ function updatePalettes(palettes, doSorting) {
             palette.unshift(cloneColor(quantizationOptions.colorZeroValue));
         }
     }
-    if (colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+    if (usesSharedColorBehaviour(colorZeroBehaviour)) {
         startIndex = 1;
     }
     if (doSorting) {
@@ -114,13 +126,22 @@ function updatePalettes(palettes, doSorting) {
     postMessage({
         action: Action.UpdatePalettes,
         palettes: pal,
+        checkpointPalettes: palettes,
         numPalettes: quantizationOptions.numPalettes,
         numColors: quantizationOptions.colorsPerPalette,
     });
 }
+function finishPartialImage(image, palettes) {
+    if (quantizationOptions.colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+        quantizationOptions.colorZeroValue = sampleMostFrequentOpaqueColor(image);
+    }
+    const reducedPalettes = reducePalettes(palettes, quantizationOptions.bitsPerChannel, quantizationOptions.toMDChannel);
+    updatePalettes(reducedPalettes, true);
+    updateQuantizedImage(quantizeTiles(reducedPalettes, image, true, quantizationOptions.toMDChannel));
+}
 function movePalettesCloser(palettes, pixel, alpha) {
     let sharedColorIndex = -1;
-    if (quantizationOptions.colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+    if (usesSharedColorBehaviour(quantizationOptions.colorZeroBehaviour)) {
         sharedColorIndex = 0;
     }
     let closestPaletteIndex = -1;
@@ -142,6 +163,9 @@ function movePalettesCloser(palettes, pixel, alpha) {
 function quantizeImage(image) {
     console.log(quantizationOptions);
     const t0 = performance.now();
+    if (quantizationOptions.colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+        quantizationOptions.colorZeroValue = sampleMostFrequentOpaqueColor(image);
+    }
     const reducedImageData = {
         width: image.width,
         height: image.height,
@@ -188,7 +212,7 @@ function quantizeImage(image) {
     }
     let palettes = colorQuantize1Color(tiles, pixels, randomShuffle);
     let startIndex = 2;
-    if (quantizationOptions.colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+    if (usesSharedColorBehaviour(quantizationOptions.colorZeroBehaviour)) {
         startIndex += 1;
     }
     let endIndex = quantizationOptions.colorsPerPalette;
@@ -593,7 +617,7 @@ function replaceWeakestColors(palettes, tiles, minColorFactor, minPaletteFactor,
             }
         }
         let sharedColorIndex = -1;
-        if (colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+        if (usesSharedColorBehaviour(colorZeroBehaviour)) {
             sharedColorIndex = 0;
         }
         for (let palIndex = 0; palIndex < palettes.length; palIndex++) {
@@ -674,7 +698,7 @@ function kMeans(palettes, tiles) {
         }
     }
     let sharedColorIndex = -1;
-    if (colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+    if (usesSharedColorBehaviour(colorZeroBehaviour)) {
         sharedColorIndex = 0;
     }
     for (let i = 0; i < sumColors.length; i++) {
@@ -947,6 +971,9 @@ function quantizeTiles(palettes, image, useDither, toMDChannel) {
         height: image.height,
         data: new Uint8ClampedArray(image.data.length),
         totalPaletteColors: numPalettes * colorsPerPalette,
+        colorsPerPalette: colorsPerPalette,
+        transparentIndexZero: colorZeroBehaviour === ColorZeroBehaviour.TransparentFromColor ||
+            colorZeroBehaviour === ColorZeroBehaviour.TransparentFromTransparent,
         paletteData: new Uint8ClampedArray(1024),
         colorIndexes: new Uint8ClampedArray(bmpWidth * image.height),
     };
@@ -1049,7 +1076,7 @@ function colorQuantize1Color(tiles, pixels, randomShuffle) {
     }
     scaleColor(avgColor, 1.0 / pixels.length);
     const palettes = [[avgColor]];
-    if (quantizationOptions.colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+    if (usesSharedColorBehaviour(quantizationOptions.colorZeroBehaviour)) {
         palettes[0].push(avgColor);
         palettes[0][0] = structuredClone(quantizationOptions.colorZeroValue);
     }
@@ -1128,14 +1155,14 @@ function colorQuantize1Palette(pixels, randomShuffle, colorsPerPalette) {
     }
     scaleColor(avgColor, 1.0 / pixels.length);
     let sharedColorIndex = -1;
-    if (colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+    if (usesSharedColorBehaviour(colorZeroBehaviour)) {
         sharedColorIndex = 0;
     }
     const colors = [avgColor];
     let splitIndex = 0;
     for (let numColors = 2; numColors <= colorsPerPalette; numColors++) {
         if (numColors === 2 &&
-            colorZeroBehaviour === ColorZeroBehaviour.Shared) {
+            usesSharedColorBehaviour(colorZeroBehaviour)) {
             colors[0] = cloneColor(quantizationOptions.colorZeroValue);
             colors.push(avgColor);
         }
@@ -1176,6 +1203,27 @@ function cloneColor(color) {
         result[i] = color[i];
     }
     return result;
+}
+function sampleMostFrequentOpaqueColor(image) {
+    const counts = new Map();
+    let mostFrequentColor = [0, 0, 0];
+    let highestCount = 0;
+    for (let i = 0; i < image.data.length; i += 4) {
+        if (image.data[i + 3] !== 255) {
+            continue;
+        }
+        const red = image.data[i];
+        const green = image.data[i + 1];
+        const blue = image.data[i + 2];
+        const key = (red << 16) | (green << 8) | blue;
+        const count = (counts.get(key) || 0) + 1;
+        counts.set(key, count);
+        if (count > highestCount) {
+            mostFrequentColor = [red, green, blue];
+            highestCount = count;
+        }
+    }
+    return mostFrequentColor;
 }
 function copyColor(dest, source) {
     for (let i = 0; i < 3; i++) {

@@ -25,6 +25,13 @@ html, body {
   flex-wrap: wrap;
   gap: 1rem;
   justify-content: center;
+  padding-inline: 15vw;
+}
+
+@media (max-width: 900px) {
+  #body {
+    padding-inline: 0;
+  }
 }
 
 input[type=number] {
@@ -33,6 +40,58 @@ input[type=number] {
 
 img, canvas {
   image-rendering: pixelated;
+}
+
+.tooltip {
+  position: relative;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-left: 0.25rem;
+  padding: 0;
+  border: 1px solid #999;
+  border-radius: 50%;
+  color: #ddd;
+  background: transparent;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: help;
+}
+
+.tooltip::after {
+  content: attr(aria-label);
+  visibility: hidden;
+  position: absolute;
+  z-index: 10;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  width: min(18rem, calc(100vw - 2rem));
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #666;
+  border-radius: 0.4rem;
+  color: white;
+  background: #111;
+  box-shadow: 0 0.25rem 0.75rem #000a;
+  font-size: 0.85rem;
+  font-weight: normal;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 0.15s ease;
+}
+
+.tooltip:hover::after,
+.tooltip:focus-visible::after {
+  visibility: visible;
+  opacity: 1;
+}
+
+.tooltip:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 2px;
 }
 
 
@@ -51,7 +110,7 @@ fieldset > fieldset {
 }
 
 fieldset > legend {
-  opacity: 0.5;
+  color: #fff8;
   font-weight: bold;
 }
 
@@ -130,6 +189,18 @@ fieldset > legend {
   background: #000a;
 }
 
+.partial-result-status {
+  opacity: 0.65;
+  font-weight: bold;
+  text-align: center;
+}
+
+.result-warning {
+  color: #ffd27f;
+  font-weight: bold;
+  text-align: center;
+}
+
 #quantized_images canvas {
   width: 100%;
   height: auto;
@@ -137,18 +208,227 @@ fieldset > legend {
 }
 
 
-/* FOOTER */
+/* ATTRIBUTE EDITOR */
 
-footer {
+#palette_grid {
+  border-collapse: collapse;
+}
+
+#palette_grid tr {
+  cursor: pointer;
+}
+
+#palette_grid tr.active {
+  outline: 2px solid white;
+}
+
+#palette_grid th {
+  padding: 0 0.5rem;
+  opacity: 0.5;
+}
+
+/* Rows share a fixed width budget, so many-color palettes get thinner swatches. */
+#palette_grid .swatch {
+  width: min(1.5rem, calc(12rem / var(--columns, 4)));
+  height: 1.5rem;
+  border: 1px solid #000;
+}
+
+#editor_layout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  padding-inline: 15vw;
+}
+
+@media (max-width: 900px) {
+  #editor_layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: 0;
+  }
+}
+
+#sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+#sidebar > fieldset {
+  margin: 0;
+}
+
+#editor_column,
+#editor_wrapper {
+  min-width: 0;
+  margin: 0;
+}
+
+#editor_toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+#editor_status {
+  max-width: 16rem;
+}
+
+#png_priority_note {
+  margin-top: 0.5rem;
+}
+
+#editor_toolbar > button {
+  font-size: 100%;
+  padding: 1rem;
+  font-weight: bold;
+}
+
+#editor_toolbar > select {
+  font-size: 100%;
+  padding: 0.25rem;
+}
+
+#history_buttons {
+  display: flex;
+  gap: 1rem;
+}
+
+#history_buttons > button {
+  flex: 1;
+  font-size: 100%;
+  padding: 0.5rem;
+}
+
+#editor_view {
+  height: max(20rem, calc(100vh - 17.5rem));
+  margin: 1rem;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  display: flex;
+}
+
+#tool_buttons {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  opacity: 0.5;
-  justify-content: center;
-  align-items: center;
+  padding: 0.5rem;
+  background: #1c1c1c;
+  border-right: 1px solid #333;
 }
 
-footer .main {
+#tool_buttons > button {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  color: white;
+  background: #161616;
+  border: 1px solid #444;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+
+#tool_buttons > button[aria-pressed="true"] {
+  outline: 2px solid white;
+}
+
+#tool_buttons > button[hidden] {
+  display: none;
+}
+
+#tool_buttons svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+#editor_canvas {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+#editor_canvas.grab {
+  cursor: grab;
+}
+
+#editor_canvas.panning {
+  cursor: grabbing;
+}
+
+#layer_dialog {
+  color: white;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 1rem;
+  padding: 1.5rem;
+}
+
+#layer_dialog::backdrop {
+  background: #000a;
+}
+
+#layer_dialog select {
+  width: 100%;
+  margin: 0.5rem 0 1.5rem;
+}
+
+#layer_dialog .dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+
+/* HEADER */
+
+header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+header .main,
+header .sub {
+  opacity: 0.5;
+}
+
+header .main {
   font-weight: bold;
   font-variant: small-caps;
+}
+
+/* Switches between the two tools; the current page is the light tab. */
+.tool-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.tool-tabs a {
+  padding: 0.5rem 1.25rem;
+  border: 1px solid #444;
+  border-radius: 0.5rem;
+  background: #222;
+  color: #fffc;
+  font-weight: bold;
+}
+
+.tool-tabs a:hover {
+  color: white;
+  border-color: #888;
+}
+
+.tool-tabs a[aria-current="page"] {
+  background: #f0f0f0;
+  border-color: #f0f0f0;
+  color: #111;
 }

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attribute Editor - Tiled Palette Quantization</title>
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="js/indexed-png.js" defer></script>
+  <script src="js/tiled-map.js" defer></script>
+  <script src="js/nes-attributes.js" defer></script>
+  <script src="js/gb-compression.js" defer></script>
+  <script src="js/gbc-attributes.js" defer></script>
+  <script src="js/attributes.js" defer></script>
+</head>
+
+<body>
+  <header>
+    <div class="main">Attribute Editor</div>
+    <div class="sub"><a href="https://github.com/PurpBatBoi">By Purps</a></div>
+    <nav class="tool-tabs">
+      <a href="index.html">Palette Quantization</a>
+      <a href="attributes.html" aria-current="page">Attribute Editor</a>
+    </nav>
+  </header>
+  <div id="editor_layout">
+    <div id="sidebar">
+      <fieldset id="input_field" title="Click or drop an indexed PNG, or a Tiled map (.tmx/.tmj) together with its tileset files...">
+        <legend>Source Image</legend>
+        <div id="source_filename">Click or drop a PNG or Tiled map...</div>
+        <input autocomplete="off" type="file" id="image_selector" accept=".png,.tmx,.tmj,.tsx,.tsj" multiple>
+      </fieldset>
+      <fieldset>
+        <legend>Palette Layout</legend>
+        <table>
+          <tr>
+            <td>
+              <label for="system">System:</label>
+              <button type="button" class="tooltip" aria-label="Sets the palette layout: colors per palette and number of palettes. Game Boy Color uses 8 palettes of 4 colors, NES uses 4 palettes of 4 colors that share color 0, assigned per 16×16 block. Mega Drive uses 4 palettes of 16 colors per 8×8 tile; color 0 is transparent and shows the backdrop (palette 0, color 0).">?</button>
+            </td>
+            <td>
+              <select autocomplete="off" id="system">
+                <option value="gbc" selected>Game Boy Color</option>
+                <option value="nes">NES</option>
+                <option value="md">Mega Drive / Genesis</option>
+              </select>
+            </td>
+          </tr>
+          <tr hidden>
+            <td colspan="2">
+              <input autocomplete="off" type="checkbox" id="fine_attributes">
+              <label for="fine_attributes">8×8 Attributes</label>
+              <button type="button" class="tooltip" aria-label="Standard NES attributes cover 16×16 pixels (2×2 tiles). Mappers such as the MMC5 allow one palette per 8×8 tile.">?</button>
+            </td>
+          </tr>
+          <tr>
+            <td><label for="zoom">Zoom:</label></td>
+            <td>
+              <select autocomplete="off" id="zoom">
+                <option value="fit" selected>Fit</option>
+                <option value="0.25">25%</option>
+                <option value="0.5">50%</option>
+                <option value="1">100%</option>
+                <option value="2">200%</option>
+                <option value="3">300%</option>
+                <option value="4">400%</option>
+                <option value="6">600%</option>
+                <option value="8">800%</option>
+                <option value="12">1200%</option>
+                <option value="16">1600%</option>
+                <option value="24">2400%</option>
+                <option value="32">3200%</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td><label for="grid_visible">Grid:</label></td>
+            <td>
+              <input autocomplete="off" type="checkbox" id="grid_visible" checked>
+              <input autocomplete="off" type="color" id="grid_color" value="#000000" aria-label="grid color">
+            </td>
+          </tr>
+          <tr>
+            <td><label for="grid_opacity">Grid Opacity:</label></td>
+            <td><input autocomplete="off" type="range" id="grid_opacity" min="0" max="1" step="0.05" value="0.05"></td>
+          </tr>
+        </table>
+      </fieldset>
+      <fieldset>
+        <legend>
+          Palettes
+          <button type="button" class="tooltip" aria-label="Click a row to select it, then click or drag over tiles to assign that palette.">?</button>
+        </legend>
+        <table id="palette_grid"></table>
+      </fieldset>
+      <div id="editor_toolbar">
+        <div id="history_buttons">
+          <button type="button" id="undo_button" title="Undo (Ctrl+Z)" disabled>Undo</button>
+          <button type="button" id="redo_button" title="Redo (Ctrl+Y / Ctrl+Shift+Z)" disabled>Redo</button>
+        </div>
+        <button type="button" id="download_button" disabled>Download Indexed PNG</button>
+        <select id="attribute_format" autocomplete="off" aria-label="attribute export format"></select>
+        <button type="button" id="attribute_download" disabled>Download Attributes</button>
+        <span id="editor_status"></span>
+      </div>
+    </div>
+    <div id="editor_column">
+      <fieldset id="editor_wrapper">
+        <legend>
+          Tiles
+          <button type="button" class="tooltip" aria-label="Click or drag to assign the selected palette. Mouse wheel zooms around the cursor. Middle-drag, or hold Space and drag, to pan.">?</button>
+        </legend>
+        <div id="editor_view">
+          <div id="tool_buttons">
+            <button type="button" id="tool_palette" aria-pressed="true" title="Palette brush: click or drag to assign the selected palette row.">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M21 3 11.5 12.5" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                <path d="M10 11.5l2.5 2.5c0 4-3 7-9.5 7 1.5-1.5 1-3 2-5s3-3.5 5-4.5z" fill="currentColor"/>
+              </svg>
+            </button>
+            <button type="button" id="tool_priority" aria-pressed="false" title="Priority brush (Game Boy Color): priority tiles draw background colors 1–3 over sprites (attribute bit 7; LCDC bit 0 must be set). A stroke that starts on a priority tile clears priority, otherwise it sets it. Saved in the attribute export only, not in the indexed PNG.">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 4H19L4 19Z" fill="#fd0" stroke="#000" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          <canvas id="editor_canvas" width="0" height="0"></canvas>
+        </div>
+      </fieldset>
+      <div id="png_priority_note" class="result-warning" hidden></div>
+    </div>
+  </div>
+  <dialog id="layer_dialog">
+    <form method="dialog">
+      <p>This map has several tile layers.<br>Pick the layer to edit:</p>
+      <select id="layer_select" autocomplete="off"></select>
+      <div class="dialog-buttons">
+        <button value="cancel">Cancel</button>
+        <button value="ok">Edit Layer</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

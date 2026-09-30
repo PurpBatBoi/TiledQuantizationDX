@@ -6,7 +6,7 @@ const numPalettesInput = document.getElementById("palette_num");
 const colorsPerPaletteInput = document.getElementById("colors_per_palette");
 const bitsPerChannelInput = document.getElementById("bits_per_channel");
 const fractionOfPixelsInput = document.getElementById("fraction_of_pixels");
-const toMDChannelInput = document.getElementById("to_MD_channel");
+const colorSpaceInput = document.getElementById("color_space");
 const integerInputs = [
     [tileWidthInput, 8],
     [tileHeightInput, 8],
@@ -42,26 +42,30 @@ function validateFloatInput(numberInput) {
 }
 const uniqueInput = document.getElementById("unique");
 const sharedInput = document.getElementById("shared");
+const specificSharedInput = document.getElementById("specific_shared");
 const transparentFromTransparentInput = document.getElementById("transparent_from_transparent");
 const transparentFromColorInput = document.getElementById("transparent_from_color");
 const indexZeroButtons = [
     uniqueInput,
     sharedInput,
+    specificSharedInput,
     transparentFromTransparentInput,
     transparentFromColorInput,
 ];
 const indexZeroValues = [
     ColorZeroBehaviour.Unique,
     ColorZeroBehaviour.Shared,
+    ColorZeroBehaviour.SpecificShared,
     ColorZeroBehaviour.TransparentFromTransparent,
     ColorZeroBehaviour.TransparentFromColor,
 ];
-const colorZeroAbbreviations = ["u", "s", "t", "tc"];
+const colorZeroAbbreviations = ["u", "s", "ss", "t", "tc"];
 const sharedColorInput = document.getElementById("shared_color");
 const transparentColorInput = document.getElementById("transparent_color");
 const defaultColorInput = document.createElement("input");
 defaultColorInput.value = "#000000";
 const colorValues = [
+    defaultColorInput,
     defaultColorInput,
     sharedColorInput,
     transparentColorInput,
@@ -153,11 +157,119 @@ let quantizedImageDownload = document.createElement("a");
 let palettesImageDownload = document.createElement("a");
 let quantizedImage = document.createElement("canvas");
 let palettesImage = document.createElement("canvas");
+let currentResult = null;
+let latestQuantizedImageData = null;
+let latestPaletteCheckpoint = null;
+let currentSourceImageData = null;
+let currentQuantizationOptions = null;
+let cancellationStatus = null;
 let worker = null;
 const quantizeButton = document.getElementById("quantizeButton");
+const cancelButton = document.getElementById("cancelButton");
 const quantizedImages = document.getElementById("quantized_images");
 const progress = document.getElementById("progress");
 const radix = 10;
+
+function setProcessingState(processing) {
+    inProgress = processing;
+    quantizeButton.disabled = processing;
+    cancelButton.disabled = !processing;
+}
+
+function cancelQuantization() {
+    if (!inProgress || worker === null)
+        return;
+    worker.terminate();
+    worker = null;
+    if (currentQuantizationOptions !== null &&
+        currentQuantizationOptions.dither !== Dither.Off &&
+        latestPaletteCheckpoint !== null &&
+        currentSourceImageData !== null) {
+        cancellationStatus = appendResultStatus(
+            currentResult,
+            "Canceled — applying dithering to partial result…",
+            "partial-result-status",
+        );
+        const finishingWorker = new Worker("./js/worker.js");
+        worker = finishingWorker;
+        setWorkerMessageHandler(finishingWorker, true);
+        cancelButton.disabled = true;
+        finishingWorker.postMessage({
+            action: Action.FinishPartial,
+            imageData: currentSourceImageData,
+            palettes: latestPaletteCheckpoint,
+            quantizationOptions: currentQuantizationOptions,
+        });
+        return;
+    }
+    finishCanceledResult("Canceled — partial result");
+}
+
+function finishCanceledResult(statusText) {
+    setProcessingState(false);
+    void finalizeQuantizedDownload(
+        quantizedImageDownload,
+        quantizedImage,
+        latestQuantizedImageData,
+        currentResult,
+    );
+    if (cancellationStatus === null) {
+        cancellationStatus = appendResultStatus(
+            currentResult,
+            statusText,
+            "partial-result-status",
+        );
+    }
+    else {
+        cancellationStatus.textContent = statusText;
+    }
+}
+
+async function finalizeQuantizedDownload(target, canvas, imageData, result) {
+    if (imageData === null)
+        return;
+    if (imageData.totalPaletteColors > 256) {
+        target.href = canvas.toDataURL();
+        appendResultStatus(
+            result,
+            "Indexed PNG supports at most 256 palette entries; this download uses RGB.",
+            "result-warning",
+        );
+        return;
+    }
+    try {
+        const encoded = await encodeIndexedPng(imageData);
+        const url = URL.createObjectURL(new Blob([encoded], { type: "image/png" }));
+        if (target.indexedPngObjectUrl) {
+            URL.revokeObjectURL(target.indexedPngObjectUrl);
+        }
+        target.indexedPngObjectUrl = url;
+        target.href = url;
+    }
+    catch (error) {
+        console.error("Indexed PNG export failed", error);
+        target.href = canvas.toDataURL();
+        appendResultStatus(
+            result,
+            "Indexed PNG export failed; this download uses RGB.",
+            "result-warning",
+        );
+    }
+}
+
+function appendResultStatus(result, text, className) {
+    if (result === null)
+        return null;
+    for (const child of result.children) {
+        if (child.textContent === text)
+            return child;
+    }
+    const status = document.createElement("div");
+    status.className = className;
+    status.textContent = text;
+    result.appendChild(status);
+    return status;
+}
 
 let sourceImageReal = new Image();
 quantizeButton.addEventListener("click", () => {
@@ -167,30 +279,34 @@ quantizeButton.addEventListener("click", () => {
     };
     sourceImageReal.src = document.getElementById("source_img").src;
 });
+cancelButton.addEventListener("click", cancelQuantization);
 
 function quantizeSourceImage(sourceImage) {
-    if (!inProgress) {
-        inProgress = true;
-        
-        quantizedImage = document.createElement("canvas");
-        quantizedImage.width = sourceImage.width;
-        quantizedImage.height = sourceImage.height;
-        quantizedImage.title = "Click to download quantized image";
-        quantizedImageDownload = document.createElement("a");
-        quantizedImageDownload.appendChild(quantizedImage);
-        
-        palettesImage = document.createElement("canvas");
-        palettesImage.width = 16;
-        palettesImage.height = sourceImage.height;
-        palettesImage.title = "Click to download palette image";
-        palettesImageDownload = document.createElement("a");
-        palettesImageDownload.appendChild(palettesImage);
-        
-        const div = document.createElement("div");
-        div.appendChild(quantizedImageDownload);
-        div.appendChild(palettesImageDownload);
-        quantizedImages.prepend(div);
-    }
+    if (inProgress)
+        return;
+    setProcessingState(true);
+
+    quantizedImage = document.createElement("canvas");
+    quantizedImage.width = sourceImage.width;
+    quantizedImage.height = sourceImage.height;
+    quantizedImage.title = "Click to download quantized image";
+    quantizedImageDownload = document.createElement("a");
+    quantizedImageDownload.appendChild(quantizedImage);
+
+    palettesImage = document.createElement("canvas");
+    palettesImage.width = 16;
+    palettesImage.height = sourceImage.height;
+    palettesImage.title = "Click to download palette image";
+    palettesImageDownload = document.createElement("a");
+    palettesImageDownload.appendChild(palettesImage);
+
+    currentResult = document.createElement("div");
+    currentResult.appendChild(quantizedImageDownload);
+    currentResult.appendChild(palettesImageDownload);
+    quantizedImages.prepend(currentResult);
+    latestQuantizedImageData = null;
+    latestPaletteCheckpoint = null;
+    cancellationStatus = null;
     
     integerInputs.forEach(validateIntegerInput);
     validateFloatInput([fractionOfPixelsInput, 0.1]);
@@ -201,10 +317,17 @@ function quantizeSourceImage(sourceImage) {
     const ditherMethod = selectedValue(ditherButtons, ditherValues);
     const ditherPattern = selectedValue(ditherPatternButtons, ditherPatternValues);
     const colorZeroAbbreviation = selectedValue(indexZeroButtons, colorZeroAbbreviations);
-    const toMDChannel = toMDChannelInput.checked;
+    const toMDChannel = usesMegaDriveColorSpace(colorSpaceInput.value);
     const settingsStr = `${toMDChannel?"-MD":""}-${tileWidthInput.value}x${tileHeightInput.value}-${numPalettesInput.value}p${colorsPerPaletteInput.value}c-${colorZeroAbbreviation}`;
     const totalPaletteColors = parseInt(numPalettesInput.value, radix) *
         parseInt(colorsPerPaletteInput.value, radix);
+    if (totalPaletteColors > 256) {
+        appendResultStatus(
+            currentResult,
+            "Indexed PNG supports at most 256 palette entries; this download uses RGB.",
+            "result-warning",
+        );
+    }
     
     /*
     if (totalPaletteColors > 256) {
@@ -220,19 +343,71 @@ function quantizeSourceImage(sourceImage) {
     
     palettesImageDownload.download =
         sourceImageName + settingsStr + "-palette.png";
+    currentSourceImageData = imageDataFrom(sourceImage);
+    currentQuantizationOptions = {
+        tileWidth: parseInt(tileWidthInput.value, radix),
+        tileHeight: parseInt(tileHeightInput.value, radix),
+        numPalettes: parseInt(numPalettesInput.value, radix),
+        colorsPerPalette: parseInt(colorsPerPaletteInput.value, radix),
+        bitsPerChannel: parseInt(bitsPerChannelInput.value, radix),
+        fractionOfPixels: parseFloat(fractionOfPixelsInput.value),
+        colorZeroBehaviour: colorZeroBehaviour,
+        colorZeroValue: colorZeroValue,
+        dither: ditherMethod,
+        ditherWeight: parseFloat(ditherWeightInput.value),
+        ditherPattern: ditherPattern,
+        toMDChannel: toMDChannel
+    };
     if (worker)
         worker.terminate();
-    worker = new Worker("./js/worker.js");
-    worker.onmessage = function (event) {
+    const quantizationWorker = new Worker("./js/worker.js");
+    worker = quantizationWorker;
+    setWorkerMessageHandler(quantizationWorker, false);
+    quantizationWorker.postMessage({
+        action: Action.StartQuantization,
+        imageData: currentSourceImageData,
+        quantizationOptions: currentQuantizationOptions,
+    });
+}
+
+function setWorkerMessageHandler(activeWorker, completingCanceledResult) {
+    if (completingCanceledResult) {
+        activeWorker.onerror = function (error) {
+            if (worker !== activeWorker)
+                return;
+            if (error)
+                console.error("Partial-result dithering failed", error);
+            activeWorker.terminate();
+            worker = null;
+            finishCanceledResult("Canceled — partial result (dithering failed)");
+        };
+    }
+    activeWorker.onmessage = function (event) {
+        if (worker !== activeWorker)
+            return;
         const data = event.data;
         if (data.action === Action.UpdateProgress) {
             progress.value = data.progress;
         }
         else if (data.action === Action.DoneQuantization) {
-            inProgress = false;
+            activeWorker.terminate();
+            worker = null;
+            if (completingCanceledResult) {
+                finishCanceledResult("Canceled — partial result (dithered)");
+            }
+            else {
+                void finalizeQuantizedDownload(
+                    quantizedImageDownload,
+                    quantizedImage,
+                    latestQuantizedImageData,
+                    currentResult,
+                );
+                setProcessingState(false);
+            }
         }
         else if (data.action === Action.UpdateQuantizedImage) {
             const imageData = data.imageData;
+            latestQuantizedImageData = imageData;
             const quantizedImageData = new window.ImageData(imageData.width, imageData.height);
             for (let i = 0; i < imageData.data.length; i++) {
                 quantizedImageData.data[i] = imageData.data[i];
@@ -250,9 +425,9 @@ function quantizeSourceImage(sourceImage) {
                 quantizedImageDownload.href = bmpToDataURL(imageData.width, imageData.height, imageData.paletteData, imageData.colorIndexes);
             }
             */
-            quantizedImageDownload.href = quantizedImage.toDataURL();
         }
         else if (data.action === Action.UpdatePalettes) {
+            latestPaletteCheckpoint = data.checkpointPalettes;
             const palettes = data.palettes;
             const paletteDisplayHeight = 8;
             const paletteDisplayWidth = Math.min(8, Math.ceil(512 / data.numColors));
@@ -271,24 +446,6 @@ function quantizeSourceImage(sourceImage) {
             palettesImageDownload.href = palettesImage.toDataURL();
         }
     };
-    worker.postMessage({
-        action: Action.StartQuantization,
-        imageData: imageDataFrom(sourceImage),
-        quantizationOptions: {
-            tileWidth: parseInt(tileWidthInput.value, radix),
-            tileHeight: parseInt(tileHeightInput.value, radix),
-            numPalettes: parseInt(numPalettesInput.value, radix),
-            colorsPerPalette: parseInt(colorsPerPaletteInput.value, radix),
-            bitsPerChannel: parseInt(bitsPerChannelInput.value, radix),
-            fractionOfPixels: parseFloat(fractionOfPixelsInput.value),
-            colorZeroBehaviour: colorZeroBehaviour,
-            colorZeroValue: colorZeroValue,
-            dither: ditherMethod,
-            ditherWeight: parseFloat(ditherWeightInput.value),
-            ditherPattern: ditherPattern,
-            toMDChannel: toMDChannel
-        },
-    });
 }
 
 function hexToColor(colorStr) {

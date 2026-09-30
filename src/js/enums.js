@@ -6,14 +6,16 @@ var Action;
     Action[Action["UpdateQuantizedImage"] = 2] = "UpdateQuantizedImage";
     Action[Action["UpdatePalettes"] = 3] = "UpdatePalettes";
     Action[Action["DoneQuantization"] = 4] = "DoneQuantization";
+    Action[Action["FinishPartial"] = 5] = "FinishPartial";
 })(Action || (Action = {}));
 
 var ColorZeroBehaviour;
 (function (ColorZeroBehaviour) {
     ColorZeroBehaviour[ColorZeroBehaviour["Unique"] = 0] = "Unique";
     ColorZeroBehaviour[ColorZeroBehaviour["Shared"] = 1] = "Shared";
-    ColorZeroBehaviour[ColorZeroBehaviour["TransparentFromTransparent"] = 2] = "TransparentFromTransparent";
-    ColorZeroBehaviour[ColorZeroBehaviour["TransparentFromColor"] = 3] = "TransparentFromColor";
+    ColorZeroBehaviour[ColorZeroBehaviour["SpecificShared"] = 2] = "SpecificShared";
+    ColorZeroBehaviour[ColorZeroBehaviour["TransparentFromTransparent"] = 3] = "TransparentFromTransparent";
+    ColorZeroBehaviour[ColorZeroBehaviour["TransparentFromColor"] = 4] = "TransparentFromColor";
 })(ColorZeroBehaviour || (ColorZeroBehaviour = {}));
 
 var Dither;
@@ -32,3 +34,7 @@ var DitherPattern;
     DitherPattern[DitherPattern["Horizontal2"] = 4] = "Horizontal2";
     DitherPattern[DitherPattern["Vertical2"] = 5] = "Vertical2";
 })(DitherPattern || (DitherPattern = {}));
+
+function usesMegaDriveColorSpace(colorSpace) {
+    return colorSpace === "megadrive";
+}
