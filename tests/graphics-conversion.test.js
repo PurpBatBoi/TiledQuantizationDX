@@ -7,8 +7,8 @@ const context = vm.createContext({});
 vm.runInContext(fs.readFileSync("src/js/nes-attributes.js", "utf8"), context);
 vm.runInContext(fs.readFileSync("src/js/graphics-conversion.js", "utf8"), context);
 // structuredClone moves results out of the vm realm (so deepEqual compares plainly), like the worker's postMessage.
-const exported = vm.runInContext("({ convertBackgroundAsset, graphicsOutputs, graphicsOutputNames, packNesTile, packGbTile, recolorNesPalettes })", context);
-const [convertBackgroundAsset, graphicsOutputs, graphicsOutputNames, packNesTile, packGbTile, recolorNesPalettes] =
+const exported = vm.runInContext("({ convertBackgroundAsset, graphicsOutputs, graphicsOutputNames, packNesTile, packGbTile, recolorNesPalettes, optimizedPngImage })", context);
+const [convertBackgroundAsset, graphicsOutputs, graphicsOutputNames, packNesTile, packGbTile, recolorNesPalettes, optimizedPngImage] =
     Object.values(exported).map((fn) => (...args) => structuredClone(fn(...args)));
 
 const BLACK = 0x000000;
@@ -208,6 +208,53 @@ function manyTiles(count, cells) {
     });
 }
 
+function indexedManyTiles() {
+    const width = 17 * 8;
+    const height = 16 * 8;
+    const palette = [BLACK, WHITE, RED, GREEN, BLACK, GREEN, RED, WHITE];
+    return indexedImage(width, height, palette, (x, y) => {
+        const group = (Math.floor(x / 16) + Math.floor(y / 16)) & 1;
+        const cell = Math.floor(y / 8) * 17 + Math.floor(x / 8);
+        const tile = cell < 257 ? cell : 0;
+        const px = x % 8;
+        const py = y % 8;
+        if (px === 7 && py === 7) return group * 4 + 2;
+        const bit = py === 0 ? px : py === 1 ? 8 + px : -1;
+        return group * 4 + (bit >= 0 && (tile >> bit) & 1 ? (group === 0 ? 1 : 3) : 0);
+    });
+}
+
+function gbcFlipOverflow() {
+    const columns = 27;
+    const rows = 19;
+    const base = (x, y) => (x === 1 ? GREEN : x === 5 && y === 3 ? BLUE : BLACK);
+    return image(columns * 8, rows * 8, (x, y) => {
+        const cell = Math.floor(y / 8) * columns + Math.floor(x / 8);
+        const px = x % 8;
+        const py = y % 8;
+        if (cell === 0) return base(px, py);
+        if (cell === 512) return px === 2 && py === 6 ? BLUE : base(7 - px, py);
+        const tile = cell - 1;
+        if (px === 7 && py === 7) return RED;
+        const bit = py === 0 ? px : py === 1 ? 8 + px : -1;
+        return bit >= 0 && (tile >> bit) & 1 ? WHITE : BLACK;
+    });
+}
+
+function moreThanUint16Tiles() {
+    const tilesX = 256;
+    const tilesY = 257;
+    return image(tilesX * 8, tilesY * 8, (x, y) => {
+        const cell = Math.floor(y / 8) * tilesX + Math.floor(x / 8);
+        if (cell === 65536) return WHITE;
+        const tile = cell < 65536 ? cell : 0;
+        const px = x % 8;
+        const py = y % 8;
+        const bit = py < 2 ? py * 8 + px : -1;
+        return bit >= 0 && (tile >> bit) & 1 ? WHITE : BLACK;
+    });
+}
+
 test("GBC sets the VRAM bank bit for tiles above 255", () => {
     const gbc = convert(manyTiles(257, 272), { system: "gbc" });
     assert.ok(gbc.ok, JSON.stringify(gbc.diagnostics));
@@ -224,6 +271,104 @@ test("rejects too many tiles", () => {
     assert.deepEqual(codes(nes), ["tile-count"]);
     assert.deepEqual(nes.diagnostics[0].rects, [{ x: (256 % 17) * 8, y: Math.floor(256 / 17) * 8, width: 8, height: 8 }]);
     assert.deepEqual(codes(convert(manyTiles(257, 272), { system: "gb" })), ["tile-count"]);
+});
+
+test("tile reuse optimization deterministically fits the hardware budget and measures changed pixels", () => {
+    const art = manyTiles(257, 272);
+    const strict = convert(art, { system: "nes" });
+    const first = convert(art, { system: "nes", optimizeTiles: true });
+    const second = convert(art, { system: "nes", optimizeTiles: true });
+
+    assert.ok(first.ok, JSON.stringify(first.diagnostics));
+    assert.equal(first.tileCount, 256);
+    assert.deepEqual(first.optimization, {
+        applied: true,
+        originalTileCount: 257,
+        substitutions: 1,
+        meanSquaredError: first.optimization.meanSquaredError,
+    });
+    assert.ok(first.optimization.meanSquaredError > 0);
+    const measuredError = first.preview.reduce((sum, value, index) => index % 4 === 3
+        ? sum : sum + (value - strict.preview[index]) ** 2, 0) / (art.width * art.height * 3);
+    assert.equal(first.optimization.meanSquaredError, measuredError);
+    assert.deepEqual(Array.from(first.cells.tile), Array.from(second.cells.tile));
+    assert.deepEqual(Array.from(first.cells.flags), Array.from(second.cells.flags));
+    assert.deepEqual(Array.from(first.tileBytes), Array.from(second.tileBytes));
+    assert.deepEqual(Array.from(first.preview), Array.from(second.preview));
+    assert.deepEqual(first.optimization, second.optimization);
+});
+
+test("tile reuse optimization leaves an image within budget unchanged", () => {
+    const art = tileStrip([(x) => [BLACK, WHITE][x & 1]]);
+    const strict = convert(art, { system: "gb" });
+    const optimized = convert(art, { system: "gb", optimizeTiles: true });
+
+    assert.ok(optimized.ok);
+    assert.equal(Object.hasOwn(strict, "optimization"), false);
+    assert.deepEqual(optimized.optimization, {
+        applied: false,
+        originalTileCount: 1,
+        substitutions: 0,
+        meanSquaredError: 0,
+    });
+    assert.deepEqual(Array.from(optimized.tileBytes), Array.from(strict.tileBytes));
+    assert.deepEqual(Array.from(optimized.cells.tile), Array.from(strict.cells.tile));
+    assert.deepEqual(Array.from(optimized.preview), Array.from(strict.preview));
+});
+
+test("GBC tile reuse optimization chooses flipped visual matches", () => {
+    const optimized = convert(gbcFlipOverflow(), { system: "gbc", optimizeTiles: true });
+
+    assert.ok(optimized.ok, JSON.stringify(optimized.diagnostics));
+    assert.equal(optimized.optimization.originalTileCount, 513);
+    assert.equal(optimized.tileCount, 512);
+    assert.equal(optimized.cells.tile[512], 0);
+    assert.equal(optimized.cells.flags[512] & 3, 1);
+    assert.equal(optimized.attributes[512] & 0x60, 0x20);
+});
+
+test("tile reuse optimization keeps exact tile IDs above Uint16 range", () => {
+    const art = moreThanUint16Tiles();
+    const optimized = convert(art, { system: "gb", optimizeTiles: true });
+
+    assert.ok(optimized.ok, JSON.stringify(optimized.diagnostics));
+    assert.equal(optimized.optimization.originalTileCount, 65537);
+    assert.equal(optimized.cells.tile[65536], 255);
+    assert.equal(optimized.preview[(2048 * 2048) * 4], 255);
+    const strict = convert(art, { system: "gb" });
+    const measuredError = optimized.preview.reduce((sum, value, index) => index % 4 === 3
+        ? sum : sum + (value - strict.preview[index]) ** 2, 0) / (optimized.width * optimized.height * 3);
+    assert.equal(optimized.optimization.meanSquaredError, measuredError);
+});
+
+test("optimized PNG data preserves palette groups and reconstructed tile pixels", () => {
+    const art = indexedImage(16, 8, [BLACK, RED, GREEN, WHITE, BLUE, GREEN, GRAY, WHITE],
+        (x) => (x < 8 ? 4 : 0) + (x & 3));
+    const optimized = convert(art, { system: "gbc", optimizeTiles: true });
+    const png = optimizedPngImage(optimized);
+
+    assert.equal(png.totalPaletteColors, 8);
+    assert.equal(png.colorsPerPalette, 4);
+    assert.deepEqual(Array.from(png.colorIndexes.subarray(0, 16)),
+        [4, 5, 6, 7, 4, 5, 6, 7, 0, 1, 2, 3, 0, 1, 2, 3]);
+    assert.deepEqual(Array.from(png.paletteData.subarray(0, 8)), [0, 0, 0, 0, 0, 0, 255, 0]);
+});
+
+test("optimized indexed PNG data keeps its tile budget when reloaded", () => {
+    const optimized = convert(indexedManyTiles(), { system: "nes", optimizeTiles: true });
+    assert.ok(optimized.ok, JSON.stringify(optimized.diagnostics));
+    assert.ok(optimized.optimization.applied);
+    const png = optimizedPngImage(optimized);
+    const rowStride = Math.ceil(png.width / 4) * 4;
+    const palette = Array.from({ length: png.totalPaletteColors }, (_, entry) =>
+        png.paletteData[entry * 4 + 2] << 16 | png.paletteData[entry * 4 + 1] << 8 | png.paletteData[entry * 4]);
+    const reloaded = indexedImage(png.width, png.height, palette,
+        (x, y) => png.colorIndexes[(png.height - 1 - y) * rowStride + x]);
+    const strict = convert(reloaded, { system: "nes" });
+
+    assert.ok(strict.ok, JSON.stringify(strict.diagnostics));
+    assert.equal(strict.tileCount, optimized.tileCount);
+    assert.deepEqual(Array.from(strict.preview), Array.from(optimized.preview));
 });
 
 test("transparent pixels flatten to color index 0", () => {

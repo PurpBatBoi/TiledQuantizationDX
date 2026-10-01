@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PNG Tile Reuse</title>
+  <link rel="icon" href="img/favicon.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="js/indexed-png.js" defer></script>
+  <script src="js/nes-attributes.js" defer></script>
+  <script src="js/graphics-conversion.js" defer></script>
+  <script src="js/tile-reuse.js" defer></script>
+</head>
+
+<body>
+  <header>
+    <div class="main">PNG Tile Reuse</div>
+    <div class="sub"><a href="https://github.com/PurpBatBoi">By Purps</a></div>
+    <nav class="tool-tabs">
+      <a href="index.html">Palette Quantization</a>
+      <a href="attributes.html">Attribute Editor</a>
+      <a href="graphics.html">Tile Graphics Conversion</a>
+      <a href="tile-reuse.html" aria-current="page">PNG Tile Reuse</a>
+    </nav>
+  </header>
+
+  <div id="reuse_layout">
+    <aside id="reuse_sidebar">
+      <fieldset id="reuse_input" title="Click or drop a PNG. Files never leave your browser.">
+        <legend>Source Image</legend>
+        <div id="reuse_filename">No PNG selected</div>
+        <button type="button" id="reuse_choose">Choose PNG</button>
+        <input autocomplete="off" type="file" id="reuse_selector" accept=".png,image/png">
+      </fieldset>
+      <fieldset>
+        <legend>Target</legend>
+        <label for="reuse_system">System:</label>
+        <select autocomplete="off" id="reuse_system">
+          <option value="nes" selected>NES - 256 tiles</option>
+          <option value="gb">Game Boy - 256 tiles</option>
+          <option value="gbc">Game Boy Color - 512 tiles</option>
+        </select>
+      </fieldset>
+      <fieldset>
+        <legend>Result</legend>
+        <div id="reuse_stats">No image loaded.</div>
+        <ul id="reuse_diagnostics"></ul>
+      </fieldset>
+      <fieldset>
+        <legend>Download</legend>
+        <button type="button" id="reuse_download" disabled>Download optimized PNG</button>
+      </fieldset>
+      <div id="reuse_status" class="visually-hidden" role="status" aria-live="polite"></div>
+    </aside>
+
+    <main id="reuse_views">
+      <fieldset>
+        <legend>Source</legend>
+        <div class="reuse-view">
+          <canvas id="reuse_source_canvas" aria-label="Source PNG preview" width="0" height="0"></canvas>
+          <span id="reuse_source_empty">Choose a PNG to begin.</span>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Optimized</legend>
+        <div class="reuse-view">
+          <canvas id="reuse_result_canvas" aria-label="Hardware-rendered optimized PNG preview" width="0" height="0"></canvas>
+          <span id="reuse_result_empty">The optimized image will appear here.</span>
+        </div>
+      </fieldset>
+    </main>
+  </div>
+</body>
+</html>

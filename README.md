@@ -1,10 +1,11 @@
 # Tiled Palette Quantization++
 
-A fork of [Selbi's Mega Drive fork](https://github.com/Selbi182/tiledpalettequant) of [rilden's Tiled Palette Quant web tool](https://rilden.github.io/tiledpalettequant), with three tools:
+A fork of [Selbi's Mega Drive fork](https://github.com/Selbi182/tiledpalettequant) of [rilden's Tiled Palette Quant web tool](https://rilden.github.io/tiledpalettequant), with four tools:
 
 - **Palette Quantization** (`src/index.html`): the original quantizer, tuned for retro-console art.
 - **Attribute Editor** (`src/attributes.html`): paint which palette each tile uses on an indexed image or a Tiled map, then export attribute data for NES, NES MMC5 or Game Boy Color.
 - **Graphics Conversion** (`src/graphics.html`): turn finished PNG background art or a Tiled map layer into NES, Game Boy or Game Boy Color tile (`.chr`) and palette (`.pal`) files.
+- **PNG Tile Reuse** (`src/tile-reuse.html`): fit an over-budget PNG to a target's tile limit by reusing the closest hardware-rendered tiles, then download the reconstructed PNG.
 
 Switch between them with the tabs under the page title.
 
@@ -18,7 +19,7 @@ It's a static site with no build step. Serve `src/` with any web server, for exa
 python -m http.server -d src
 ```
 
-Then open http://localhost:8000/. The quantizer uses a Web Worker, which Chromium browsers (Chrome, Edge) block on `file://` pages. Opening the HTML file directly works for the Attribute Editor but not for quantizing. Graphics Conversion also uses a worker, but falls back to converting on the page when the worker is blocked.
+Then open http://localhost:8000/. The quantizer uses a Web Worker, which Chromium browsers (Chrome, Edge) block on `file://` pages. Opening the HTML file directly works for the Attribute Editor but not for quantizing. Graphics Conversion and PNG Tile Reuse also use a worker, but fall back to converting on the page when the worker is blocked.
 
 Tests use Node's built-in runner:
 
@@ -67,6 +68,8 @@ Converts PNG background art into hardware data, entirely in the browser. Apart f
 2. **Attribute Editor** (optional): fix which palette each block uses, then download the indexed PNG.
 3. **Graphics Conversion:** load the PNG or Tiled map, pick the target, check the Tileset Map Preview and tileset, then download the files.
 
+When an otherwise valid PNG has too many unique tiles, open **PNG Tile Reuse** instead. It keeps the same palette conversion and exact deduplication, then applies lossy tile substitutions only if the exact result exceeds the target's hardware limit.
+
 ### Targets
 
 | Target | Colors | Tiles | Flipped tiles |
@@ -106,6 +109,14 @@ Graphics only, as plain binary files named after the source image, for example `
 |---|---|---|---|
 | `<name>.chr` | Planar 2bpp tiles padded to a 4 KB pattern table (256 tiles), as NEXXT and YYCHR load it | Interleaved 2bpp tiles, unpadded | Interleaved 2bpp tiles, unpadded (tiles 256+ go to VRAM bank 1) |
 | `<name>.pal` | 16 bytes: the 4 background palettes as PPU colors (NEXXT's format), unused palettes filled with color 0 | 1 byte: the BGP register value | The used palettes as little-endian RGB555, 8 bytes each (rgbgfx's `.pal`) |
+
+## PNG Tile Reuse
+
+This editor accepts PNG files for NES, Game Boy and Game Boy Color. Palette rules, transparency rules and dimension requirements are the same as Graphics Conversion. It does not accept Tiled maps or export hardware data.
+
+Exact duplicate tiles are always reused first. If that still exceeds the hardware limit, the editor keeps the most-used tile patterns (with scan order breaking ties) and replaces every remaining map cell with its closest retained tile. Distance is measured from the reconstructed hardware RGB colors in that cell's existing palette, so palette assignments never change. Game Boy Color can also choose horizontal or vertical flipped matches; NES and Game Boy cannot.
+
+The Result panel shows the exact and final tile counts, number of substituted cells and root-mean-square RGB error. Images already within the limit are reconstructed without tile substitutions. The only download is an indexed `<name>_optimized.png` at the source PNG's original dimensions; its palette groups preserve the optimized tile budget when it is loaded again.
 
 ### Where the rules come from
 

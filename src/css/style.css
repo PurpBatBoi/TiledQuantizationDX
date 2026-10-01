@@ -693,3 +693,115 @@ header .main {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+
+/* PNG TILE REUSE */
+
+#reuse_layout {
+  display: grid;
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  padding-inline: 8vw;
+}
+
+#reuse_sidebar,
+#reuse_views {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+#reuse_sidebar > fieldset,
+#reuse_views > fieldset {
+  min-width: 0;
+  margin: 0;
+}
+
+#reuse_input {
+  display: flex;
+  min-height: 6rem;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+}
+
+#reuse_selector {
+  display: none;
+}
+
+#reuse_filename {
+  max-width: 100%;
+  overflow: hidden;
+  opacity: 0.65;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#reuse_system,
+#reuse_choose,
+#reuse_download {
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+}
+
+#reuse_choose {
+  margin-top: 0.75rem;
+}
+
+#reuse_stats,
+#reuse_diagnostics {
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+#reuse_diagnostics {
+  margin: 0.5rem 0 0;
+  padding-left: 1rem;
+  color: #ffd27f;
+}
+
+#reuse_diagnostics:empty {
+  display: none;
+}
+
+.reuse-view {
+  display: grid;
+  min-height: 15rem;
+  place-items: center;
+  overflow: auto;
+  border-radius: 0.5rem;
+  background: #161616;
+}
+
+.reuse-view canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  box-shadow: 0 0 1rem black;
+}
+
+.reuse-view canvas[hidden] {
+  display: none;
+}
+
+.reuse-view span {
+  padding: 1rem;
+  color: #aaa;
+  text-align: center;
+}
+
+@media (min-width: 1100px) {
+  #reuse_views {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  #reuse_layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: 0;
+  }
+}

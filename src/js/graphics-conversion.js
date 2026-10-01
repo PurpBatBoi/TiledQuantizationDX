@@ -191,7 +191,8 @@ function diagnostic(code, message, hint, rects = []) {
 
 // input: { width, height, rgba, indexed? } where indexed is decodeIndexedPng's { palette, indexes }.
 // options: { system: "nes" | "gb" | "gbc", sharedColor?: NES PPU color overriding the automatic color 0,
-// autoShades?: Game Boy art over 4 colors is grouped into the 4 shades by brightness instead of rejected }.
+// autoShades?: Game Boy art over 4 colors is grouped into the 4 shades by brightness instead of rejected,
+// optimizeTiles?: when exact deduplication exceeds the hardware limit, reuse the closest retained tiles }.
 function convertBackgroundAsset(input, options) {
     const system = options.system;
     const target = GRAPHICS_TARGETS[system];
@@ -454,7 +455,7 @@ function convertBackgroundAsset(input, options) {
 
     // Deduplicate tiles by their 2bpp pattern: the palette lives in the attributes, so it isn't part of the tile.
     const cellCount = tilesX * tilesY;
-    const cells = { tile: new Uint16Array(cellCount), palette: new Uint8Array(cellCount), flags: new Uint8Array(cellCount) };
+    const cells = { tile: new Uint32Array(cellCount), palette: new Uint8Array(cellCount), flags: new Uint8Array(cellCount) };
     const patterns = [];
     const lookup = new Map();
     const patternKey = (pattern) => String.fromCharCode(...pattern);
@@ -486,12 +487,78 @@ function convertBackgroundAsset(input, options) {
         cells.palette[cell] = blockPalette[blockOfPixel(top * width + left)];
         cells.flags[cell] = flags | (tile > 255 ? 4 : 0);
     }
-    if (patterns.length > target.maxTiles) {
+    const originalTileCount = patterns.length;
+    let optimization = null;
+    if (options.optimizeTiles === true) {
+        optimization = { applied: false, originalTileCount, substitutions: 0, meanSquaredError: 0 };
+    }
+    if (patterns.length > target.maxTiles && options.optimizeTiles === true) {
+        const uses = new Uint32Array(patterns.length);
+        cells.tile.forEach((tile) => { uses[tile]++; });
+        const retained = patterns.map((_, tile) => tile)
+            .sort((a, b) => uses[b] - uses[a] || a - b)
+            .slice(0, target.maxTiles)
+            .sort((a, b) => a - b);
+        const retainedSet = new Set(retained);
+        const remappedIndex = new Int32Array(patterns.length).fill(-1);
+        retained.forEach((tile, index) => { remappedIndex[tile] = index; });
+        const retainedPatterns = retained.map((tile) => patterns[tile]);
+        const closest = new Map();
+        let totalSquaredError = 0;
+
+        const errorBetween = (source, candidate, palette) => {
+            let error = 0;
+            for (let pixel = 0; pixel < 64; pixel++) {
+                const a = paletteColors[palette][source[pixel]];
+                const b = paletteColors[palette][candidate[pixel]];
+                const dr = ((a >> 16) & 255) - ((b >> 16) & 255);
+                const dg = ((a >> 8) & 255) - ((b >> 8) & 255);
+                const db = (a & 255) - (b & 255);
+                error += dr * dr + dg * dg + db * db;
+            }
+            return error;
+        };
+
+        cells.tile.forEach((oldTile, cell) => {
+            if (retainedSet.has(oldTile)) {
+                cells.tile[cell] = remappedIndex[oldTile];
+                return;
+            }
+            const oldFlags = cells.flags[cell] & 3;
+            const cacheKey = `${oldTile}:${cells.palette[cell]}:${oldFlags}`;
+            let match = closest.get(cacheKey);
+            if (match === undefined) {
+                const source = oldFlags === 0 ? patterns[oldTile]
+                    : flipPattern(patterns[oldTile], oldFlags & 1, oldFlags & 2);
+                match = { tile: 0, flags: 0, error: Infinity };
+                retainedPatterns.forEach((candidate, tile) => {
+                    for (const [h, v] of flipOrder) {
+                        const shown = h || v ? flipPattern(candidate, h, v) : candidate;
+                        const error = errorBetween(source, shown, cells.palette[cell]);
+                        if (error < match.error) match = { tile, flags: h | v << 1, error };
+                    }
+                });
+                closest.set(cacheKey, match);
+            }
+            cells.tile[cell] = match.tile;
+            cells.flags[cell] = match.flags;
+            optimization.substitutions++;
+            totalSquaredError += match.error;
+        });
+        patterns.splice(0, patterns.length, ...retainedPatterns);
+        cells.tile.forEach((tile, cell) => {
+            cells.flags[cell] = (cells.flags[cell] & 3) | (tile > 255 ? 4 : 0);
+        });
+        optimization.applied = true;
+        optimization.meanSquaredError = totalSquaredError / (pixelCount * 3);
+    }
+    else if (patterns.length > target.maxTiles) {
         const extra = [];
         cells.tile.forEach((tile, cell) => { if (tile >= target.maxTiles) extra.push(cell); });
         return fail(diagnostic("tile-count", `Artwork needs ${patterns.length} unique tiles; ${target.name} allows ${target.maxTiles}.`,
             "Reuse more identical tiles, or split the artwork into smaller screens.", extra.map(rectOfTile)));
     }
+    cells.tile = Uint16Array.from(cells.tile);
 
     const pack = system === "nes" ? packNesTile : packGbTile;
     const tileBytes = new Uint8Array(patterns.length * 16);
@@ -522,10 +589,19 @@ function convertBackgroundAsset(input, options) {
         });
     }
 
-    for (let i = 0; i < pixelCount; i++) {
-        const rgb = paletteColors[blockPalette[blockOfPixel(i)]][pixelIndex[i]];
-        result.preview.set([(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255], i * 4);
-    }
+    cells.tile.forEach((tile, cell) => {
+        const left = (cell % tilesX) * GRAPHICS_TILE;
+        const top = Math.floor(cell / tilesX) * GRAPHICS_TILE;
+        const flags = cells.flags[cell];
+        const pattern = patterns[tile];
+        for (let y = 0; y < 8; y++) {
+            for (let x = 0; x < 8; x++) {
+                const value = pattern[(flags & 2 ? 7 - y : y) * 8 + (flags & 1 ? 7 - x : x)];
+                const rgb = paletteColors[cells.palette[cell]][value];
+                result.preview.set([(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255], ((top + y) * width + left + x) * 4);
+            }
+        }
+    });
     return Object.assign(result, {
         ok: true,
         sharedColor,
@@ -539,7 +615,40 @@ function convertBackgroundAsset(input, options) {
         cells,
         tileCount: patterns.length,
         paletteCount: paletteValues.length,
+        ...(optimization === null ? {} : { optimization }),
     });
+}
+
+// Builds the indexed image consumed by encodeIndexedPng. Palette groups stay attached to map cells, so loading the
+// downloaded PNG again preserves the optimized tile patterns instead of re-inferring palettes from truecolor pixels.
+function optimizedPngImage(result) {
+    const totalPaletteColors = result.paletteColors.length * 4;
+    const paletteData = new Uint8Array(totalPaletteColors * 4);
+    result.paletteColors.flat().forEach((rgb, index) => {
+        paletteData.set([rgb & 255, (rgb >> 8) & 255, (rgb >> 16) & 255, 0], index * 4);
+    });
+    const rowStride = Math.ceil(result.width / 4) * 4;
+    const colorIndexes = new Uint8Array(rowStride * result.height);
+    for (let y = 0; y < result.height; y++) {
+        for (let x = 0; x < result.width; x++) {
+            const cell = Math.floor(y / 8) * result.tilesX + Math.floor(x / 8);
+            const flags = result.cells.flags[cell];
+            const tile = result.cells.tile[cell];
+            const tx = flags & 1 ? 7 - x % 8 : x % 8;
+            const ty = flags & 2 ? 7 - y % 8 : y % 8;
+            const value = result.tilePixels[tile * 64 + ty * 8 + tx];
+            colorIndexes[(result.height - 1 - y) * rowStride + x] = result.cells.palette[cell] * 4 + value;
+        }
+    }
+    return {
+        width: result.width,
+        height: result.height,
+        totalPaletteColors,
+        colorsPerPalette: 4,
+        transparentIndexZero: false,
+        paletteData,
+        colorIndexes,
+    };
 }
 
 // NES touch-up after conversion: recolor palette entries without touching the tiles, which keep their indexes.
