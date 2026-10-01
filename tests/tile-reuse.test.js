@@ -31,15 +31,17 @@ class FakeElement {
     click() {}
 
     getContext() {
-        return { putImageData() {} };
+        return { putImageData() {}, fillRect() {}, drawImage() {} };
     }
 }
 
 test("a failed newer PNG import cancels and invalidates the previous conversion", async () => {
     const elements = new Map([
-        "reuse_selector", "reuse_input", "reuse_choose", "reuse_filename", "reuse_system", "reuse_stats",
+        "reuse_selector", "reuse_input", "reuse_choose", "reuse_filename", "reuse_flips", "reuse_target", "reuse_stats",
         "reuse_diagnostics", "reuse_download", "reuse_status", "reuse_source_canvas", "reuse_result_canvas",
-        "reuse_source_empty", "reuse_result_empty",
+        "reuse_source_empty", "reuse_result_empty", "reuse_zoom", "reuse_grid", "reuse_grid_color",
+        "reuse_grid_opacity", "reuse_views", "reuse_tool_pan", "reuse_tool_keep", "reuse_clear_kept",
+        "reuse_tolerance", "reuse_tolerance_value",
     ].map((id) => [id, new FakeElement()]));
     const workers = [];
     class FakeWorker {
@@ -57,8 +59,9 @@ test("a failed newer PNG import cancels and invalidates the previous conversion"
         Uint8Array,
         Uint8ClampedArray,
         Worker: FakeWorker,
+        ResizeObserver: class { observe() {} },
         announce: undefined,
-        convertBackgroundAsset() { throw new Error("unexpected inline conversion"); },
+        compressTiles() { throw new Error("unexpected inline conversion"); },
         createImageBitmap: async () => { throw new Error("Corrupt PNG"); },
         decodeIndexedPng: async (bytes) => {
             if (new Uint8Array(bytes)[0] !== 1) throw new Error("Not indexed");
@@ -72,6 +75,7 @@ test("a failed newer PNG import cancels and invalidates the previous conversion"
         },
         document: {
             getElementById: (id) => elements.get(id),
+            addEventListener() {},
             createElement: () => new FakeElement(),
         },
         setTimeout,
@@ -93,7 +97,10 @@ test("a failed newer PNG import cancels and invalidates the previous conversion"
                 width: 8,
                 height: 8,
                 preview: new Uint8ClampedArray(8 * 8 * 4),
-                optimization: { applied: false, originalTileCount: 1, substitutions: 0, meanSquaredError: 0 },
+                originalTileCount: 1,
+                tileCount: 1,
+                substitutions: 0,
+                meanSquaredError: 0,
             },
         },
     });

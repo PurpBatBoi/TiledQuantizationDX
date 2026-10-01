@@ -695,7 +695,7 @@ header .main {
 }
 
 
-/* PNG TILE REUSE */
+/* TILE COMPRESSION */
 
 #reuse_layout {
   display: grid;
@@ -739,7 +739,9 @@ header .main {
   white-space: nowrap;
 }
 
-#reuse_system,
+#reuse_target,
+#reuse_tolerance,
+#reuse_clear_kept,
 #reuse_choose,
 #reuse_download {
   width: 100%;
@@ -747,7 +749,8 @@ header .main {
   font: inherit;
 }
 
-#reuse_choose {
+#reuse_choose,
+#reuse_clear_kept {
   margin-top: 0.75rem;
 }
 
@@ -767,27 +770,43 @@ header .main {
   display: none;
 }
 
+/* Pan/zoom viewports like the Attribute Editor's: the canvas fills the view, the image floats on it. */
 .reuse-view {
-  display: grid;
-  min-height: 15rem;
-  place-items: center;
-  overflow: auto;
+  display: flex;
+  height: max(20rem, calc(100vh - 17.5rem));
+  overflow: hidden;
   border-radius: 0.5rem;
   background: #161616;
 }
 
 .reuse-view canvas {
   display: block;
-  max-width: 100%;
-  height: auto;
-  box-shadow: 0 0 1rem black;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
 }
 
-.reuse-view canvas[hidden] {
+.reuse-view canvas.brush {
+  cursor: crosshair;
+}
+
+.reuse-view canvas.grab {
+  cursor: grab;
+}
+
+.reuse-view canvas.panning {
+  cursor: grabbing;
+}
+
+.reuse-view canvas[hidden],
+.reuse-view span[hidden] {
   display: none;
 }
 
 .reuse-view span {
+  margin: auto;
   padding: 1rem;
   color: #aaa;
   text-align: center;

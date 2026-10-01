@@ -5,7 +5,8 @@ importScripts("nes-attributes.js", "graphics-conversion.js");
 
 onmessage = ({ data }) => {
     try {
-        postMessage({ id: data.id, result: convertBackgroundAsset(data.input, data.options) });
+        const convert = data.task === "compress" ? compressTiles : convertBackgroundAsset;
+        postMessage({ id: data.id, result: convert(data.input, data.options) });
     }
     catch (error) {
         postMessage({ id: data.id, error: error.message });

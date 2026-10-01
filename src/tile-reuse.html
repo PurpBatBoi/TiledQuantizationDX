@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PNG Tile Reuse</title>
+  <title>Tile Compression</title>
   <link rel="icon" href="img/favicon.png">
   <link rel="stylesheet" href="css/style.css">
   <script src="js/indexed-png.js" defer></script>
@@ -14,13 +14,13 @@
 
 <body>
   <header>
-    <div class="main">PNG Tile Reuse</div>
+    <div class="main">Tile Compression</div>
     <div class="sub"><a href="https://github.com/PurpBatBoi">By Purps</a></div>
     <nav class="tool-tabs">
       <a href="index.html">Palette Quantization</a>
       <a href="attributes.html">Attribute Editor</a>
       <a href="graphics.html">Tile Graphics Conversion</a>
-      <a href="tile-reuse.html" aria-current="page">PNG Tile Reuse</a>
+      <a href="tile-reuse.html" aria-current="page">Tile Compression</a>
     </nav>
   </header>
 
@@ -34,12 +34,51 @@
       </fieldset>
       <fieldset>
         <legend>Target</legend>
-        <label for="reuse_system">System:</label>
-        <select autocomplete="off" id="reuse_system">
-          <option value="nes" selected>NES - 256 tiles</option>
-          <option value="gb">Game Boy - 256 tiles</option>
-          <option value="gbc">Game Boy Color - 512 tiles</option>
-        </select>
+        <label for="reuse_target">Target tiles:</label>
+        <input autocomplete="off" type="number" id="reuse_target" min="1" max="65536" step="1" value="256" placeholder="No limit">
+        <label for="reuse_tolerance">
+          Tolerance: <output id="reuse_tolerance_value" for="reuse_tolerance">0</output>
+          <button type="button" class="tooltip" aria-label="Tiles within this average difference per color channel (0-128) reuse an earlier tile instead of adding a new one. 0 keeps only exact matches. Leave Target tiles blank to let the tolerance alone decide the count.">?</button>
+        </label>
+        <input autocomplete="off" type="range" id="reuse_tolerance" min="0" max="128" step="1" value="0">
+        <label><input autocomplete="off" type="checkbox" id="reuse_flips"> Match flipped tiles</label>
+        <button type="button" id="reuse_clear_kept" disabled>Clear kept cells</button>
+      </fieldset>
+      <fieldset>
+        <legend>View</legend>
+        <table>
+          <tr>
+            <td><label for="reuse_zoom">Zoom:</label></td>
+            <td>
+              <select autocomplete="off" id="reuse_zoom">
+                <option value="fit" selected>Fit</option>
+                <option value="0.25">25%</option>
+                <option value="0.5">50%</option>
+                <option value="1">100%</option>
+                <option value="2">200%</option>
+                <option value="3">300%</option>
+                <option value="4">400%</option>
+                <option value="6">600%</option>
+                <option value="8">800%</option>
+                <option value="12">1200%</option>
+                <option value="16">1600%</option>
+                <option value="24">2400%</option>
+                <option value="32">3200%</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td><label for="reuse_grid">Grid:</label></td>
+            <td>
+              <input autocomplete="off" type="checkbox" id="reuse_grid" checked>
+              <input autocomplete="off" type="color" id="reuse_grid_color" value="#000000" aria-label="grid color">
+            </td>
+          </tr>
+          <tr>
+            <td><label for="reuse_grid_opacity">Grid Opacity:</label></td>
+            <td><input autocomplete="off" type="range" id="reuse_grid_opacity" min="0" max="1" step="0.05" value="0.05"></td>
+          </tr>
+        </table>
       </fieldset>
       <fieldset>
         <legend>Result</legend>
@@ -48,24 +87,39 @@
       </fieldset>
       <fieldset>
         <legend>Download</legend>
-        <button type="button" id="reuse_download" disabled>Download optimized PNG</button>
+        <button type="button" id="reuse_download" disabled>Download compressed PNG</button>
       </fieldset>
       <div id="reuse_status" class="visually-hidden" role="status" aria-live="polite"></div>
     </aside>
 
     <main id="reuse_views">
       <fieldset>
-        <legend>Source</legend>
+        <legend>
+          Source
+          <button type="button" class="tooltip" aria-label="Wheel: zoom around the cursor. Drag, middle-drag or Space + drag: pan. Both previews move together. Keep brush: click or drag over cells whose tiles must stay exact; a stroke starting on a kept cell clears instead.">?</button>
+        </legend>
         <div class="reuse-view">
+          <div id="tool_buttons">
+            <button type="button" id="reuse_tool_pan" aria-pressed="true" title="Pan: drag to move the view.">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button type="button" id="reuse_tool_keep" aria-pressed="false" title="Keep brush: mark cells whose tiles must stay exact. They get first claim on the target tile budget.">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 4H19L4 19Z" fill="#fd0" stroke="#000" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
           <canvas id="reuse_source_canvas" aria-label="Source PNG preview" width="0" height="0"></canvas>
           <span id="reuse_source_empty">Choose a PNG to begin.</span>
         </div>
       </fieldset>
       <fieldset>
-        <legend>Optimized</legend>
+        <legend>Compressed</legend>
         <div class="reuse-view">
-          <canvas id="reuse_result_canvas" aria-label="Hardware-rendered optimized PNG preview" width="0" height="0"></canvas>
-          <span id="reuse_result_empty">The optimized image will appear here.</span>
+          <canvas id="reuse_result_canvas" aria-label="Compressed PNG preview" width="0" height="0"></canvas>
+          <span id="reuse_result_empty">The compressed image will appear here.</span>
         </div>
       </fieldset>
     </main>
