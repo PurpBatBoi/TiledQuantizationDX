@@ -201,7 +201,6 @@ function quantizeImage(image) {
     let finalAlpha = 0.05;
     const meanSquareErr = meanSquareError;
     if (quantizationOptions.dither === Dither.Slow) {
-        // meanSquareErr = meanSquareErrorDither;
         iterations /= 5;
         alpha = 0.1;
         finalAlpha = 0.02;
@@ -282,8 +281,6 @@ function quantizeImage(image) {
             updatePalettes(palettes, false);
         }
     }
-    console.log("Normal final: " + meanSquareError(palettes, tiles).toFixed(0));
-    console.log("Dither final: " + meanSquareErrorDither(palettes, tiles).toFixed(0));
     updateProgress(prog[2]);
     updatePalettes(palettes, false);
     if (!useDither) {
@@ -549,10 +546,7 @@ function brightness(color) {
 function replaceWeakestColors(palettes, tiles, minColorFactor, minPaletteFactor, replacePalettes) {
     const colorZeroBehaviour = quantizationOptions.colorZeroBehaviour;
     const useSlowDither = quantizationOptions.dither === Dither.Slow;
-    let closestPal = closestPaletteDistance;
-    if (useSlowDither) {
-        closestPal = closestPaletteDistanceDither;
-    }
+    const palDistance = useSlowDither ? paletteDistanceDither : paletteDistance;
     const closestPaletteIndex = zeroArray(tiles.length);
     let maxPaletteIndex = 0;
     let minPaletteIndex = 0;
@@ -561,19 +555,18 @@ function replaceWeakestColors(palettes, tiles, minColorFactor, minPaletteFactor,
     if (palettes.length > 1) {
         for (let j = 0; j < tiles.length; j++) {
             const tile = tiles[j];
-            const [index, minDistance] = closestPal(palettes, tile);
-            totalPaletteMse[index] += minDistance;
+            const distances = palettes.map((palette) => palDistance(palette, tile));
+            const index = minIndex(distances);
+            totalPaletteMse[index] += distances[index];
             closestPaletteIndex[j] = index;
-            const remainingPalettes = [];
-            for (let i = 0; i < palettes.length; i++) {
-                if (i != index) {
-                    remainingPalettes.push(palettes[i]);
+            // second-best palette: what this tile would cost if its palette were removed
+            let secondDistance = Infinity;
+            for (let i = 0; i < distances.length; i++) {
+                if (i != index && distances[i] < secondDistance) {
+                    secondDistance = distances[i];
                 }
             }
-            if (remainingPalettes.length > 0) {
-                const [, minDistance2] = closestPal(remainingPalettes, tile);
-                removedPaletteMse[index] += minDistance2;
-            }
+            removedPaletteMse[index] += secondDistance;
         }
         maxPaletteIndex = maxIndex(totalPaletteMse);
         minPaletteIndex = minIndex(removedPaletteMse);
@@ -611,13 +604,13 @@ function replaceWeakestColors(palettes, tiles, minColorFactor, minPaletteFactor,
                     const [minColorIndex, minDist] = getClosestColor(pal, color);
                     totalColorMse[minPaletteIndex][minColorIndex] +=
                         minDist * tile.counts[i];
-                    const remainingColors = [];
-                    for (let i = 0; i < pal.length; i++) {
-                        if (i != minColorIndex) {
-                            remainingColors.push(pal[i]);
+                    let secondDist = Infinity;
+                    for (let k = 0; k < pal.length; k++) {
+                        const dist = colorDistance(pal[k], color);
+                        if (k != minColorIndex && dist < secondDist) {
+                            secondDist = dist;
                         }
                     }
-                    const [, secondDist] = getClosestColor(remainingColors, color);
                     secondColorMse[minPaletteIndex][minColorIndex] +=
                         secondDist * tile.counts[i];
                 }
@@ -733,19 +726,6 @@ function meanSquareError(palettes, tiles) {
     }
     return totalDistance / count;
 }
-function meanSquareErrorDither(palettes, tiles) {
-    let totalDistance = 0;
-    let count = 0;
-    for (const tile of tiles) {
-        const palIndex = getClosestPaletteIndexDither(palettes, tile);
-        for (const pixel of tile.pixels) {
-            const [, minDistance] = getClosestColorDither(palettes[palIndex], pixel);
-            totalDistance += minDistance;
-            count += 1;
-        }
-    }
-    return totalDistance / count;
-}
 class RandomShuffle {
     constructor(n) {
         this.values = [];
@@ -783,14 +763,26 @@ function getClosestColor(palette, color) {
     }
     return [minIndex, minDist];
 }
+// scratch buffers reused across calls: this runs per pixel per palette in the hot loop.
+// comparedColor is one shared buffer (it always held the last iteration's color);
+// callers must use the returned color before the next call.
+const ditherCandidates = [0, 1, 2, 3].map(() => ({ colorIndex: 0, colorDistance: 0, brightness: 0 }));
+const ditherError = [0, 0, 0];
+const ditherLinearPixel = [0, 0, 0];
+const ditherCompared = [0, 0, 0];
+const ditherErr = [0, 0, 0];
+const ditherReducedColor = [0, 0, 0];
+const ditherResult = [0, 0, ditherCompared];
 function getClosestColorDither(palette, pixel) {
-    const error = [0, 0, 0];
-    const linearPixel = cloneColor(pixel.color);
+    const error = ditherError;
+    error[0] = error[1] = error[2] = 0;
+    const linearPixel = ditherLinearPixel;
+    copyColor(linearPixel, pixel.color);
     toLinearColor(linearPixel);
-    const candidates = [];
-    const c = [0, 0, 0];
-    const err = [0, 0, 0];
-    const reducedColor = [0, 0, 0];
+    const candidates = ditherCandidates;
+    const c = ditherCompared;
+    const err = ditherErr;
+    const reducedColor = ditherReducedColor;
     for (let i = 0; i < ditherPixels; i++) {
         copyColor(c, linearPixel);
         copyColor(err, error);
@@ -800,12 +792,10 @@ function getClosestColorDither(palette, pixel) {
         toSrgbColor(c);
         const [minColorIndex, minDist] = getClosestColor(palette, c);
         const minColor = palette[minColorIndex];
-        candidates.push({
-            colorIndex: minColorIndex,
-            colorDistance: minDist,
-            comparedColor: c,
-            brightness: brightness(minColor),
-        });
+        const candidate = candidates[i];
+        candidate.colorIndex = minColorIndex;
+        candidate.colorDistance = minDist;
+        candidate.brightness = brightness(minColor);
         copyColor(reducedColor, minColor);
         toNbitColor(reducedColor, quantizationOptions.bitsPerChannel, quantizationOptions.colorSpace);
         toLinearColor(reducedColor);
@@ -820,38 +810,54 @@ function getClosestColorDither(palette, pixel) {
         }
     }
     const index = ditherPattern[pixel.x & 1][pixel.y & 1];
-    return [
-        candidates[index].colorIndex,
-        candidates[index].colorDistance,
-        candidates[index].comparedColor,
-    ];
+    ditherResult[0] = candidates[index].colorIndex;
+    ditherResult[1] = candidates[index].colorDistance;
+    return ditherResult;
 }
 function colorDistance(a, b) {
-    return 2 * Math.pow((a[0] - b[0]), 2) + 4 * Math.pow((a[1] - b[1]), 2) + Math.pow((a[2] - b[2]), 2);
+    const d0 = a[0] - b[0];
+    const d1 = a[1] - b[1];
+    const d2 = a[2] - b[2];
+    return 2 * d0 * d0 + 4 * d1 * d1 + d2 * d2;
 }
-function paletteDistance(palette, tile) {
+function minColorDistance(palette, color) {
+    let minDist = Infinity;
+    for (let i = 0; i < palette.length; i++) {
+        const dist = colorDistance(palette[i], color);
+        if (dist < minDist)
+            minDist = dist;
+    }
+    return minDist;
+}
+// stops summing once the total can no longer beat bound (callers only need the winner)
+function paletteDistance(palette, tile, bound = Infinity) {
     let sum = 0;
     const colors = tile.colors;
     const counts = tile.counts;
-    for (let i = 0; i < colors.length; i++) {
-        const [, minDist] = getClosestColor(palette, colors[i]);
-        sum += counts[i] * minDist;
+    for (let i = 0; i < colors.length && sum < bound; i++) {
+        sum += counts[i] * minColorDistance(palette, colors[i]);
     }
     return sum;
 }
-function paletteDistanceDither(palette, tile) {
+function paletteDistanceDither(palette, tile, bound = Infinity) {
     let sum = 0;
-    for (const pixel of tile.pixels) {
-        const [, minDist] = getClosestColorDither(palette, pixel);
-        sum += minDist;
+    const pixels = tile.pixels;
+    for (let i = 0; i < pixels.length && sum < bound; i++) {
+        sum += getClosestColorDither(palette, pixels[i])[1];
     }
     return sum;
 }
 function getClosestPaletteIndex(palettes, tile) {
-    if (palettes.length === 1)
-        return 0;
-    const distances = palettes.map((palette) => paletteDistance(palette, tile));
-    return minIndex(distances);
+    let best = 0;
+    let bestDist = Infinity;
+    for (let p = 0; p < palettes.length && palettes.length > 1; p++) {
+        const dist = paletteDistance(palettes[p], tile, bestDist);
+        if (dist < bestDist) {
+            best = p;
+            bestDist = dist;
+        }
+    }
+    return best;
 }
 function closestPaletteDistance(palettes, tile) {
     const distances = palettes.map((palette) => paletteDistance(palette, tile));
@@ -859,15 +865,16 @@ function closestPaletteDistance(palettes, tile) {
     return [index, distances[index]];
 }
 function getClosestPaletteIndexDither(palettes, tile) {
-    if (palettes.length === 1)
-        return 0;
-    const distances = palettes.map((palette) => paletteDistanceDither(palette, tile));
-    return minIndex(distances);
-}
-function closestPaletteDistanceDither(palettes, tile) {
-    const distances = palettes.map((palette) => paletteDistanceDither(palette, tile));
-    const index = minIndex(distances);
-    return [index, distances[index]];
+    let best = 0;
+    let bestDist = Infinity;
+    for (let p = 0; p < palettes.length && palettes.length > 1; p++) {
+        const dist = paletteDistanceDither(palettes[p], tile, bestDist);
+        if (dist < bestDist) {
+            best = p;
+            bestDist = dist;
+        }
+    }
+    return best;
 }
 function getColor(image, x, y) {
     const index = 4 * (x + image.width * y);
