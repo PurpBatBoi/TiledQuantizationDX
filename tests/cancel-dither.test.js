@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function runPartialFinish() {
+async function runPartialFinish() {
     const messages = [];
     const context = vm.createContext({
         console,
@@ -13,11 +13,13 @@ function runPartialFinish() {
             messages.push(message);
         },
         structuredClone,
+        // worker fetches quantize.wasm relative to itself
+        fetch: async () => ({ arrayBuffer: async () => fs.readFileSync("src/js/quantize.wasm") }),
         Uint8ClampedArray,
     });
     vm.runInContext(fs.readFileSync("src/js/worker.js", "utf8"), context);
 
-    context.onmessage({
+    await context.onmessage({
         data: {
             action: 5,
             imageData: {
@@ -50,8 +52,8 @@ function runPartialFinish() {
     return messages;
 }
 
-test("finishing a canceled partial result applies the selected dithering", () => {
-    const messages = runPartialFinish();
+test("finishing a canceled partial result applies the selected dithering", async () => {
+    const messages = await runPartialFinish();
     const imageMessage = messages.find((message) => message.action === 2);
 
     assert.ok(imageMessage, "expected a rendered partial image");

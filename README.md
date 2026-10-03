@@ -27,6 +27,8 @@ Tests use Node's built-in runner:
 node --test tests/*.test.js
 ```
 
+The quantizer itself is C++ in `src/wasm/quantize.cpp`, compiled to the committed `src/js/quantize.wasm`. You only need to rebuild it after changing the C++. Install Zig with `pip install ziglang`, then run the build command from the top of that file.
+
 ## Attribute Editor
 
 ### Loading
