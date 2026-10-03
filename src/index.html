@@ -78,6 +78,13 @@
         </tr>
         <tr>
           <td>
+            <label for="seed">Seed:</label>
+            <button type="button" class="tooltip" aria-label="Training is randomized, so the same settings can give different palettes. The same seed always gives the same result. Leave empty for a random seed each run; the seed used is shown so you can reuse a result you liked.">?</button>
+          </td>
+          <td><input autocomplete="off" type="number" id="seed" min="0" max="4294967295" step="1" placeholder="random"> <output id="last_seed"></output></td>
+        </tr>
+        <tr>
+          <td>
             <label for="color_space">Color Space:</label>
             <button type="button" class="tooltip" aria-label="Default uses Bits Per Channel across the full 0–255 range. Megadrive additionally maps each channel to up to 8 values from 0x00 through 0xEE. NES snaps each palette color to the nearest 2C02G NES color (NESdev wiki palette) and ignores Bits Per Channel for palettes.">?</button>
           </td>
@@ -88,6 +95,28 @@
               <option value="nes">NES</option>
             </select>
           </td>
+        </tr>
+        <tr id="color_fit_row" hidden>
+          <td>
+            <label for="color_fit">Color Best Fit:</label>
+            <button type="button" class="tooltip" aria-label="How colors are compared when matching to the NES palette. Weighted RGB is the original behaviour. OKLab and CIELAB are perceptual and keep hues the NES palette can only approximate; they usually look best without dithering.">?</button>
+          </td>
+          <td>
+            <select autocomplete="off" id="color_fit">
+              <option value="rgb" selected>Weighted RGB</option>
+              <option value="linear">Linearized RGB</option>
+              <option value="xyz">CIEXYZ</option>
+              <option value="cielab">CIELAB</option>
+              <option value="oklab">OKLab</option>
+            </select>
+          </td>
+        </tr>
+        <tr id="chroma_weight_row" hidden>
+          <td>
+            <label for="chroma_weight">Chroma Weight:</label>
+            <button type="button" class="tooltip" aria-label="CIELAB and OKLab only. How much hue and saturation count against lightness. Lower values match brightness first and let hues drift.">?</button>
+          </td>
+          <td><input autocomplete="off" type="range" id="chroma_weight" min="0.05" max="1" step="0.05" value="0.4"> <output id="chroma_weight_value">0.4</output></td>
         </tr>
       </table>
     </fieldset>

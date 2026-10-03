@@ -32,6 +32,10 @@ onmessage = async function (event) {
     updateProgress(0);
     const data = event.data;
     quantizationOptions = data.quantizationOptions;
+    if (quantizationOptions.seed !== undefined) {
+        // one job per worker, so replacing Math.random seeds both the C++ training and palette sorting
+        Math.random = mulberry32(quantizationOptions.seed);
+    }
     if (data.action === Action.FinishPartial) {
         await finishPartialImage(data.imageData, data.palettes);
     }
@@ -41,6 +45,14 @@ onmessage = async function (event) {
     updateProgress(100);
     postMessage({ action: Action.DoneQuantization });
 };
+function mulberry32(seed) {
+    return function () {
+        seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
 function updateProgress(progress) {
     postMessage({ action: Action.UpdateProgress, progress: progress });
 }
@@ -76,7 +88,8 @@ async function finishPartialImage(image, palettes) {
     if (quantizationOptions.colorZeroBehaviour === ColorZeroBehaviour.Shared) {
         quantizationOptions.colorZeroValue = sampleMostFrequentOpaqueColor(image);
     }
-    const flat = palettes.flat(2);
+    const toFit = bestFitTransform(quantizationOptions);
+    const flat = (toFit ? palettes.map((palette) => palette.map((c) => toFit(...c))) : palettes).flat(2);
     await runWasm(image, (wasm, imagePtr) => {
         const palettesPtr = wasm.alloc(flat.length * 8);
         new Float64Array(wasm.memory.buffer, palettesPtr, flat.length).set(flat);
@@ -152,7 +165,69 @@ async function runWasm(image, start) {
     wasm.configure(o.tileWidth, o.tileHeight, o.numPalettes, o.colorsPerPalette, o.bitsPerChannel, o.fractionOfPixels, o.colorZeroBehaviour, ...o.colorZeroValue, o.dither, o.ditherWeight, o.ditherPattern, colorSpaceIds[o.colorSpace] ?? 0);
     const imagePtr = wasm.alloc(image.data.length);
     new Uint8Array(memory.buffer, imagePtr, image.data.length).set(image.data);
+    const toFit = bestFitTransform(o);
+    if (toFit) {
+        const doubles = (values) => {
+            const ptr = wasm.alloc(values.length * 8);
+            new Float64Array(memory.buffer, ptr, values.length).set(values);
+            return ptr;
+        };
+        const pixels = new Float64Array(width * height * 3);
+        for (let i = 0; i < width * height; i++) {
+            pixels.set(toFit(image.data[4 * i], image.data[4 * i + 1], image.data[4 * i + 2]), 3 * i);
+        }
+        wasm.usePerceptual(doubles(pixels), doubles(nesPalette.flatMap((c) => toFit(...c))), ...toFit(...o.colorZeroValue));
+    }
     start(wasm, imagePtr);
+}
+// Color best-fit models (NES only for now). Each maps RGB into coordinates where the
+// C++ distance 2x² + 4y² + z² equals the model's own distance, so the quantizer itself
+// doesn't change. Lab models scale a/b by chromaWeight: lower favors matching lightness.
+function bestFitTransform({ colorSpace, colorFit = "rgb", chromaWeight = 1 }) {
+    if (colorSpace !== "nes" || colorFit === "rgb")
+        return null;
+    const linear = (v) => {
+        v /= 255;
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    // weights per coordinate -> scale so 2x² + 4y² + z² = w0·u² + w1·v² + w2·w²
+    const scaled = (u, v, w, weights) => [u * Math.sqrt(weights[0] / 2), v * Math.sqrt(weights[1] / 4), w * Math.sqrt(weights[2])];
+    const lab = [1, chromaWeight, chromaWeight];
+    switch (colorFit) {
+        case "linear":
+            return (r, g, b) => [linear(r) * 255, linear(g) * 255, linear(b) * 255];
+        case "xyz":
+            return (r, g, b) => {
+                const [x, y, z] = toXyz(linear(r), linear(g), linear(b));
+                return scaled(x * 255, y * 255, z * 255, [1, 1, 1]);
+            };
+        case "cielab":
+            return (r, g, b) => {
+                const [x, y, z] = toXyz(linear(r), linear(g), linear(b));
+                const f = (t) => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116);
+                const fx = f(x / 0.95047), fy = f(y), fz = f(z / 1.08883);
+                // L is 0–100; scale to 0–255 like the other models
+                return scaled(2.55 * (116 * fy - 16), 2.55 * 500 * (fx - fy), 2.55 * 200 * (fy - fz), lab);
+            };
+        case "oklab":
+            return (r, g, b) => {
+                const lr = linear(r), lg = linear(g), lb = linear(b);
+                const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+                const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+                const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+                return scaled(255 * (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s),
+                    255 * (1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s),
+                    255 * (0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s), lab);
+            };
+    }
+    return null;
+}
+function toXyz(r, g, b) {
+    return [
+        0.4124564 * r + 0.3575761 * g + 0.1804375 * b,
+        0.2126729 * r + 0.7151522 * g + 0.0721750 * b,
+        0.0193339 * r + 0.1191920 * g + 0.9503041 * b,
+    ];
 }
 function sortPalettes(palettes, startIndex) {
     const pairIterations = 2000;
@@ -442,16 +517,16 @@ function toMegaDriveChannel(num) {
   const level = Math.round(num / 255 * 7);
   return level * 0x22;
 }
-// NESdev wiki 2C02G palette ($00-$3F); $0D, $1D and $xE/$xF are all #000000
+// 2C02G NESdev wiki palette ($00-$3F), from docs/2C02G_U_wiki_JASC.pal; $0D, $1D and $xE/$xF are #000000
 const nesPalette = [
-    0x626262, 0x001C95, 0x1904AC, 0x42009D, 0x61006B, 0x6E0025, 0x650500, 0x491E00,
-    0x223700, 0x004900, 0x004F00, 0x004816, 0x00355E, 0x000000, 0x000000, 0x000000,
-    0xABABAB, 0x0C4EDB, 0x3D2EFF, 0x7115F3, 0x9B0BB9, 0xB01262, 0xA92704, 0x894600,
-    0x576600, 0x237F00, 0x008900, 0x008332, 0x006D90, 0x000000, 0x000000, 0x000000,
-    0xFFFFFF, 0x57A5FF, 0x8287FF, 0xB46DFF, 0xDF60FF, 0xF863C6, 0xF8746D, 0xDE9020,
-    0xB3AE00, 0x81C800, 0x56D522, 0x3DD36F, 0x3EC1C8, 0x4E4E4E, 0x000000, 0x000000,
-    0xFFFFFF, 0xBEE0FF, 0xCDD4FF, 0xE0CAFF, 0xF1C4FF, 0xFCC4EF, 0xFDCACE, 0xF5D4AF,
-    0xE6DF9C, 0xD3E99A, 0xC2EFA8, 0xB7EFC4, 0xB6EAE5, 0xB8B8B8, 0x000000, 0x000000,
+    0x575757, 0x000C8E, 0x0800A6, 0x340096, 0x550061, 0x630015, 0x5A0000, 0x3C0E00,
+    0x112800, 0x003B00, 0x004200, 0x003A05, 0x002652, 0x000000, 0x000000, 0x000000,
+    0xA5A5A5, 0x0041D9, 0x2F1EFF, 0x6704F2, 0x9400B4, 0xAA0057, 0xA31800, 0x803900,
+    0x4B5B00, 0x137600, 0x008100, 0x007923, 0x006288, 0x000000, 0x000000, 0x000000,
+    0xFFFFFF, 0x4A9FFF, 0x797EFF, 0xAF63FF, 0xDD55FF, 0xF757C2, 0xF76A63, 0xDC8810,
+    0xAEA900, 0x78C400, 0x4AD211, 0x2FCF64, 0x2FBDC4, 0x414141, 0x000000, 0x000000,
+    0xFFFFFF, 0xB9DDFF, 0xCAD1FF, 0xDEC6FF, 0xF0C0FF, 0xFCC0EE, 0xFDC6CA, 0xF5D0AA,
+    0xE4DD95, 0xD0E892, 0xBDEEA2, 0xB2EEC0, 0xB0E8E3, 0xB3B3B3, 0x000000, 0x000000,
 ].map((rgb) => [rgb >> 16, (rgb >> 8) & 0xFF, rgb & 0xFF]);
 // cached because Slow dither snaps colors inside its per-pixel loop
 const nesColorCache = new Map();

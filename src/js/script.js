@@ -7,6 +7,13 @@ const colorsPerPaletteInput = document.getElementById("colors_per_palette");
 const bitsPerChannelInput = document.getElementById("bits_per_channel");
 const fractionOfPixelsInput = document.getElementById("fraction_of_pixels");
 const colorSpaceInput = document.getElementById("color_space");
+const colorFitInput = document.getElementById("color_fit");
+const seedInput = document.getElementById("seed");
+const lastSeedOutput = document.getElementById("last_seed");
+const chromaWeightInput = document.getElementById("chroma_weight");
+const chromaWeightValue = document.getElementById("chroma_weight_value");
+const colorFitRow = document.getElementById("color_fit_row");
+const chromaWeightRow = document.getElementById("chroma_weight_row");
 const integerInputs = [
     [tileWidthInput, 8],
     [tileHeightInput, 8],
@@ -126,6 +133,25 @@ body.addEventListener("drop", (event) => {
         }
     }
 });
+
+// empty seed input = new random seed each run; shown so a good result can be repeated
+function chooseSeed() {
+    const typed = parseInt(seedInput.value, radix);
+    const seed = Number.isNaN(typed) ? Math.floor(Math.random() * 2 ** 32) : typed >>> 0;
+    lastSeedOutput.value = "used: " + seed;
+    return seed;
+}
+
+// best-fit models only apply to NES; chroma weight only to the Lab models
+function updateColorFitRows() {
+    colorFitRow.hidden = colorSpaceInput.value !== "nes";
+    chromaWeightRow.hidden = colorFitRow.hidden || !["cielab", "oklab"].includes(colorFitInput.value);
+    chromaWeightValue.value = chromaWeightInput.value;
+}
+colorSpaceInput.addEventListener("change", updateColorFitRows);
+colorFitInput.addEventListener("change", updateColorFitRows);
+chromaWeightInput.addEventListener("input", updateColorFitRows);
+updateColorFitRows();
 
 imageSelector.addEventListener("change", () => {
     if (imageSelector.files == null)
@@ -356,7 +382,10 @@ function quantizeSourceImage(sourceImage) {
         dither: ditherMethod,
         ditherWeight: parseFloat(ditherWeightInput.value),
         ditherPattern: ditherPattern,
-        colorSpace: colorSpace
+        colorSpace: colorSpace,
+        colorFit: colorFitInput.value,
+        seed: chooseSeed(),
+        chromaWeight: parseFloat(chromaWeightInput.value),
     };
     if (worker)
         worker.terminate();

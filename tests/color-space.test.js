@@ -21,7 +21,7 @@ test("Megadrive maps each channel to 0x00 through 0xEE", () => {
 });
 
 test("NES snaps to the nearest 2C02G palette color", () => {
-    assert.deepEqual(reduce([0x50, 0xA0, 0xF8], "nes"), [0x57, 0xA5, 0xFF]); // $21
+    assert.deepEqual(reduce([0x50, 0xA0, 0xF8], "nes"), [74, 159, 255]); // $21
     assert.deepEqual(reduce([10, 5, 8], "nes"), [0, 0, 0]); // $0F
     assert.deepEqual(reduce([250, 250, 250], "nes"), [255, 255, 255]); // $20
 });

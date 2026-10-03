@@ -78,16 +78,16 @@ static double toNbit(double value) {
     return rounded;
 }
 
-// NESdev wiki 2C02G palette, same table as worker.js
+// 2C02G NESdev wiki palette, from docs/2C02G_U_wiki_JASC.pal; same table as worker.js
 static const int nesRgb[64] = {
-    0x626262, 0x001C95, 0x1904AC, 0x42009D, 0x61006B, 0x6E0025, 0x650500, 0x491E00,
-    0x223700, 0x004900, 0x004F00, 0x004816, 0x00355E, 0x000000, 0x000000, 0x000000,
-    0xABABAB, 0x0C4EDB, 0x3D2EFF, 0x7115F3, 0x9B0BB9, 0xB01262, 0xA92704, 0x894600,
-    0x576600, 0x237F00, 0x008900, 0x008332, 0x006D90, 0x000000, 0x000000, 0x000000,
-    0xFFFFFF, 0x57A5FF, 0x8287FF, 0xB46DFF, 0xDF60FF, 0xF863C6, 0xF8746D, 0xDE9020,
-    0xB3AE00, 0x81C800, 0x56D522, 0x3DD36F, 0x3EC1C8, 0x4E4E4E, 0x000000, 0x000000,
-    0xFFFFFF, 0xBEE0FF, 0xCDD4FF, 0xE0CAFF, 0xF1C4FF, 0xFCC4EF, 0xFDCACE, 0xF5D4AF,
-    0xE6DF9C, 0xD3E99A, 0xC2EFA8, 0xB7EFC4, 0xB6EAE5, 0xB8B8B8, 0x000000, 0x000000,
+    0x575757, 0x000C8E, 0x0800A6, 0x340096, 0x550061, 0x630015, 0x5A0000, 0x3C0E00,
+    0x112800, 0x003B00, 0x004200, 0x003A05, 0x002652, 0x000000, 0x000000, 0x000000,
+    0xA5A5A5, 0x0041D9, 0x2F1EFF, 0x6704F2, 0x9400B4, 0xAA0057, 0xA31800, 0x803900,
+    0x4B5B00, 0x137600, 0x008100, 0x007923, 0x006288, 0x000000, 0x000000, 0x000000,
+    0xFFFFFF, 0x4A9FFF, 0x797EFF, 0xAF63FF, 0xDD55FF, 0xF757C2, 0xF76A63, 0xDC8810,
+    0xAEA900, 0x78C400, 0x4AD211, 0x2FCF64, 0x2FBDC4, 0x414141, 0x000000, 0x000000,
+    0xFFFFFF, 0xB9DDFF, 0xCAD1FF, 0xDEC6FF, 0xF0C0FF, 0xFCC0EE, 0xFDC6CA, 0xF5D0AA,
+    0xE4DD95, 0xD0E892, 0xBDEEA2, 0xB2EEC0, 0xB0E8E3, 0xB3B3B3, 0x000000, 0x000000,
 };
 
 // ---- palettes ----
@@ -282,9 +282,31 @@ static int nesIndex(const double* color) {
     }
     return index;
 }
+// NES mode works in a perceptual space (see nesMetric in worker.js): pixel and palette
+// colors are scaled OKLab coordinates, so colorDistance compares lightness first and
+// hue softly. Colors only turn back into RGB on the way out.
+static bool perceptual;
+static const double* perceptualImage;   // 3 per image pixel
+static double colorZeroPalette[3];      // colorZeroValue as a palette color
+static int nearestNes(const double* color) {
+    double dist;
+    return getClosestColor(nesSet.pal(0), 64, color, &dist);
+}
+// palette color -> RGB bytes for output
+static void outputRgb(const double* color, double* rgb) {
+    if (!perceptual) {
+        copyColor(rgb, color);
+        return;
+    }
+    int i = nearestNes(color);
+    rgb[0] = nesRgb[i] >> 16;
+    rgb[1] = (nesRgb[i] >> 8) & 0xFF;
+    rgb[2] = nesRgb[i] & 0xFF;
+}
+
 static void toNbitColor(double* color) {
     if (colorSpace == SpaceNes) {
-        nesSet.get(0, nesIndex(color), color);
+        nesSet.get(0, perceptual ? nearestNes(color) : nesIndex(color), color);
         return;
     }
     for (int i = 0; i < 3; i++) color[i] = toNbit(color[i]);
@@ -339,6 +361,7 @@ static void extractTiles(const unsigned char* image, int width, int height) {
                     double color[3] = {(double)p[0], (double)p[1], (double)p[2]};
                     if (colorZeroBehaviour == TransparentFromColor && equalColor(color, colorZeroValue)) continue;
                     if (colorZeroBehaviour == TransparentFromTransparent && p[3] < 255) continue;
+                    if (perceptual) copyColor(color, perceptualImage + 3 * (x + width * y));
                     copyColor(pixelColor + 3 * numPixels, color);
                     pixelX[numPixels] = x;
                     pixelY[numPixels] = y;
@@ -380,13 +403,12 @@ static void cacheDither(PaletteSet& set, int p, int c) {
     double color[3];
     set.get(p, c, color);
     double brightness = 0;
-    for (int i = 0; i < 3; i++) brightness += brightnessScale[i] * (color[i] * color[i]);
+    if (perceptual) brightness = color[0];  // scaled OKLab lightness
+    else for (int i = 0; i < 3; i++) brightness += brightnessScale[i] * (color[i] * color[i]);
     set.brightness[k] = brightness;
     toNbitColor(color);
     double* rl = set.reducedLinear + p * PaletteStride;
-    rl[c] = color[0] * color[0];
-    rl[MaxColors + c] = color[1] * color[1];
-    rl[2 * MaxColors + c] = color[2] * color[2];
+    for (int i = 0; i < 3; i++) rl[i * MaxColors + c] = perceptual ? color[i] : color[i] * color[i];
     set.cached[k] = true;
 }
 
@@ -399,12 +421,14 @@ static int getClosestColorDither(PaletteSet& set, int p, int len, const double* 
     const double* palette = set.pal(p);
     const double* rl = set.reducedLinear + p * PaletteStride;
     double error[3] = {0, 0, 0}, linearPixel[3];
-    for (int i = 0; i < 3; i++) linearPixel[i] = color[i] * color[i];
+    // error diffuses in linear light; OKLab is already close to linear, so it diffuses as is
+    for (int i = 0; i < 3; i++) linearPixel[i] = perceptual ? color[i] : color[i] * color[i];
     Candidate candidates[4];
     double* c = comparedColor;
     for (int i = 0; i < ditherPixels; i++) {
         for (int k = 0; k < 3; k++) {
             c[k] = linearPixel[k] + error[k] * ditherWeight;
+            if (perceptual) continue;
             if (c[k] < 0) c[k] = 0;
             else if (c[k] > 255 * 255) c[k] = 255 * 255;
             c[k] = __builtin_sqrt(c[k]);
@@ -584,7 +608,7 @@ static void colorQuantize1Color() {
     if (usesSharedColor()) {
         paletteColors = 2;
         palettes.set(0, 1, avgColor);
-        palettes.set(0, 0, colorZeroValue);
+        palettes.set(0, 0, colorZeroPalette);
     }
     int splitIndex = 0;
     double distances[MaxPalettes];
@@ -798,7 +822,11 @@ static void reducePalettes(PaletteSet& set) {
 static double* packed;
 static void emitPalettes(int doSorting) {
     for (int p = 0; p < numPalettes; p++)
-        for (int c = 0; c < paletteColors; c++) palettes.get(p, c, packed + 3 * (p * paletteColors + c));
+        for (int c = 0; c < paletteColors; c++) {
+            double color[3];
+            palettes.get(p, c, color);
+            outputRgb(color, packed + 3 * (p * paletteColors + c));  // NES mode shows the snapped colors
+        }
     jsPalettes(packed, numPalettes, paletteColors, doSorting);
 }
 
@@ -812,11 +840,19 @@ static void render(PaletteSet& src, bool useDither) {
     int adjustedIndex = hasTransparentIndex() ? 1 : 0;
     __builtin_memcpy(reduced.colors, src.colors, sizeof(double) * numPalettes * PaletteStride);
     reducePalettes(reduced);
-    double transparentColor[3], colorZero[3];
-    copyColor(transparentColor, colorZeroValue);
-    if (dither != DitherOff) toNbitColor(transparentColor);
-    copyColor(colorZero, colorZeroValue);
-    toNbitColor(colorZero);
+    double transparentColor[3], colorZero[3];  // RGB
+    if (perceptual) {
+        double snapped[3];
+        copyColor(snapped, colorZeroPalette);
+        toNbitColor(snapped);
+        outputRgb(snapped, colorZero);
+        copyColor(transparentColor, dither != DitherOff ? colorZero : colorZeroValue);
+    } else {
+        copyColor(transparentColor, colorZeroValue);
+        if (dither != DitherOff) toNbitColor(transparentColor);
+        copyColor(colorZero, colorZeroValue);
+        toNbitColor(colorZero);
+    }
     int bmpWidth = (width + 3) / 4 * 4;
     fill(outIndexes, bmpWidth * height, (unsigned char)0);
     fill(outPalette, 1024, (unsigned char)0);
@@ -828,9 +864,10 @@ static void render(PaletteSet& src, bool useDither) {
                 i += 4;
             }
             for (int c = 0; c < paletteColors; c++) {
-                double color[3];
+                double color[3], rgb[3];
                 reduced.get(p, c, color);
-                for (int k = 0; k < 3; k++) outPalette[i + k] = clampByte(color[2 - k]);
+                outputRgb(color, rgb);
+                for (int k = 0; k < 3; k++) outPalette[i + k] = clampByte(rgb[2 - k]);
                 i += 4;
             }
         }
@@ -864,15 +901,17 @@ static void render(PaletteSet& src, bool useDither) {
                         outIndexes[bmpIndex] = clampByte(p * colorsPerPalette);
                         continue;
                     }
+                    if (perceptual) copyColor(color, perceptualImage + 3 * (x + width * y));
                     int c;
                     double dist;
                     if (useDither && pixelAt[x + width * y] >= 0) c = pixelChoice[pixelAt[x + width * y]];
                     else if (useDither) c = getClosestColorDither(reduced, p, paletteColors, color, x, y, &dist);
                     else if (colorAt[x + width * y] >= 0) c = colorChoice[colorAt[x + width * y]];
                     else c = getClosestColor(palette, paletteColors, color, &dist);
-                    double out[3];
+                    double out[3], rgb[3];
                     reduced.get(p, c, out);
-                    for (int k = 0; k < 3; k++) outData[index + k] = clampByte(out[k]);
+                    outputRgb(out, rgb);
+                    for (int k = 0; k < 3; k++) outData[index + k] = clampByte(rgb[k]);
                     outData[index + 3] = 255;
                     outIndexes[bmpIndex] = clampByte(p * colorsPerPalette + c + adjustedIndex);
                 }
@@ -907,6 +946,18 @@ EXPORT void configure(int tileW, int tileH, int numPals, int colorsPerPal, int b
         nesSet.set(0, i, color);
     }
     if (colorSpace == SpaceNes && !nesCache) nesCache = allocArray<unsigned char>(1 << 24);  // fresh pages are zeroed
+    copyColor(colorZeroPalette, colorZeroValue);
+}
+
+// NES best-fit model: JS converted every image pixel, the 64 NES colors and color zero
+// into the model's space, scaled so colorDistance is the model's distance
+EXPORT void usePerceptual(const double* image, const double* nesColors, double cz0, double cz1, double cz2) {
+    perceptual = true;
+    perceptualImage = image;
+    for (int i = 0; i < 64; i++) nesSet.set(0, i, nesColors + 3 * i);
+    colorZeroPalette[0] = cz0;
+    colorZeroPalette[1] = cz1;
+    colorZeroPalette[2] = cz2;
 }
 
 static void load(const unsigned char* image, int width, int height) {
