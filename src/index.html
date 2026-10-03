@@ -79,12 +79,13 @@
         <tr>
           <td>
             <label for="color_space">Color Space:</label>
-            <button type="button" class="tooltip" aria-label="Default uses Bits Per Channel across the full 0–255 range. Megadrive additionally maps each channel to up to 8 values from 0x00 through 0xEE.">?</button>
+            <button type="button" class="tooltip" aria-label="Default uses Bits Per Channel across the full 0–255 range. Megadrive additionally maps each channel to up to 8 values from 0x00 through 0xEE. NES snaps each palette color to the nearest 2C02G NES color (NESdev wiki palette) and ignores Bits Per Channel for palettes.">?</button>
           </td>
           <td>
             <select autocomplete="off" id="color_space">
               <option value="default">Default</option>
               <option value="megadrive" selected>Megadrive</option>
+              <option value="nes">NES</option>
             </select>
           </td>
         </tr>

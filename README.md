@@ -137,7 +137,7 @@ The rules are reimplemented, not bundled, from GBDK-2020's tools:
 
 - Quantization:
   - Palette images are generated with 8x8 pixels per color instead of 16x16. This is a requirement of many art importers, including SonPLN and GetArt.NET
-  - Added a color-space selector with Default and Megadrive options (Megadrive enabled by default)
+  - Added a color-space selector with Default, Megadrive and NES (2C02G NESdev wiki palette) options (Megadrive enabled by default)
   - Added an option to sample the most frequent opaque source color as a shared color-zero entry
   - Changed default values:
     - Palettes: 1 (used to be 8)

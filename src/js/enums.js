@@ -34,7 +34,3 @@ var DitherPattern;
     DitherPattern[DitherPattern["Horizontal2"] = 4] = "Horizontal2";
     DitherPattern[DitherPattern["Vertical2"] = 5] = "Vertical2";
 })(DitherPattern || (DitherPattern = {}));
-
-function usesMegaDriveColorSpace(colorSpace) {
-    return colorSpace === "megadrive";
-}

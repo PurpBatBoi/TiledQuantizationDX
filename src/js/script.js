@@ -317,8 +317,8 @@ function quantizeSourceImage(sourceImage) {
     const ditherMethod = selectedValue(ditherButtons, ditherValues);
     const ditherPattern = selectedValue(ditherPatternButtons, ditherPatternValues);
     const colorZeroAbbreviation = selectedValue(indexZeroButtons, colorZeroAbbreviations);
-    const toMDChannel = usesMegaDriveColorSpace(colorSpaceInput.value);
-    const settingsStr = `${toMDChannel?"-MD":""}-${tileWidthInput.value}x${tileHeightInput.value}-${numPalettesInput.value}p${colorsPerPaletteInput.value}c-${colorZeroAbbreviation}`;
+    const colorSpace = colorSpaceInput.value;
+    const settingsStr = `${{ megadrive: "-MD", nes: "-NES" }[colorSpace] ?? ""}-${tileWidthInput.value}x${tileHeightInput.value}-${numPalettesInput.value}p${colorsPerPaletteInput.value}c-${colorZeroAbbreviation}`;
     const totalPaletteColors = parseInt(numPalettesInput.value, radix) *
         parseInt(colorsPerPaletteInput.value, radix);
     if (totalPaletteColors > 256) {
@@ -356,7 +356,7 @@ function quantizeSourceImage(sourceImage) {
         dither: ditherMethod,
         ditherWeight: parseFloat(ditherWeightInput.value),
         ditherPattern: ditherPattern,
-        toMDChannel: toMDChannel
+        colorSpace: colorSpace
     };
     if (worker)
         worker.terminate();

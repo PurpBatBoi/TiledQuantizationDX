@@ -43,7 +43,7 @@ function runPartialFinish() {
                 dither: 1,
                 ditherWeight: 1,
                 ditherPattern: 0,
-                toMDChannel: false,
+                colorSpace: "default",
             },
         },
     });
