@@ -15,6 +15,8 @@ const systemSelect = document.getElementById("system");
 const sharedColorRow = document.getElementById("shared_color_row");
 const autoShadesRow = document.getElementById("auto_shades_row");
 const autoShadesInput = document.getElementById("auto_shades");
+const genericRows = document.querySelectorAll(".generic-row");
+const genericInputs = ["generic_block", "generic_colors", "generic_palettes", "generic_tiles", "generic_flips"].map((id) => document.getElementById(id));
 const sharedAuto = document.getElementById("shared_auto");
 const sharedValue = document.getElementById("shared_value");
 const sharedSwatches = document.getElementById("shared_swatches");
@@ -184,7 +186,8 @@ function convert() {
         if (loadError !== null) announce(loadError);
         return;
     }
-    const message = { id, input, options: { system: systemSelect.value, sharedColor: sharedOverride, autoShades: autoShadesInput.checked } };
+    const message = { id, input, options: { system: systemSelect.value, sharedColor: sharedOverride, autoShades: autoShadesInput.checked,
+        generic: genericRules() } };
     const finish = (converted) => {
         if (id === jobId) receive(converted);
     };
@@ -251,6 +254,16 @@ function receive(conversion) {
     render();
 }
 
+function genericRules() {
+    const [block, colors, palettes, tiles, flips] = genericInputs;
+    const whole = (input, fallback) => Math.max(1, Math.floor(Number(input.value)) || fallback);
+    return { block: Number(block.value), colors: Number(colors.value), maxPalettes: whole(palettes, 8), maxTiles: whole(tiles, 256), flips: flips.checked };
+}
+
+function currentBlock() {
+    return systemSelect.value === "generic" ? genericRules().block : GRAPHICS_TARGETS[systemSelect.value].block;
+}
+
 function buildBases() {
     const { width, height } = input;
     // A failed conversion has no tiles: the map view shows the art in matched hardware colors under the red outlines.
@@ -285,7 +298,7 @@ function buildBases() {
 function statsText() {
     if (!result?.ok) return "";
     const flipped = result.cells.flags.reduce((count, flags) => count + (flags & 3 ? 1 : 0), 0);
-    const flipText = result.system === "gbc" ? `, ${flipped} flipped reuse(s)` : "";
+    const flipText = result.flips ? `, ${flipped} flipped reuse(s)` : "";
     const shadeText = result.autoShaded > 0 ? `, ${result.autoShaded} colors grouped into 4 shades` : "";
     return `${result.width}×${result.height} px, ${result.tilesX}×${result.tilesY} tiles, ${result.tileCount} unique tile(s), `
         + `${result.paletteCount} palette(s)${flipText}${shadeText}`;
@@ -302,7 +315,7 @@ const mapView = createView(mapCanvas, () => ({
     base: bases?.map ?? null,
     grid: cellGrid(),
     rects: result?.diagnostics.flatMap((d) => d.rects) ?? [],
-    block: GRAPHICS_TARGETS[systemSelect.value].block,
+    block: currentBlock(),
 }));
 const tilesetView = createView(tilesetCanvas, () => ({
     base: bases?.tileset ?? null,
@@ -448,6 +461,7 @@ function drawViews() {
 function renderSharedColor() {
     sharedColorRow.hidden = systemSelect.value !== "nes";
     autoShadesRow.hidden = systemSelect.value !== "gb";
+    for (const row of genericRows) row.hidden = systemSelect.value !== "generic";
     sharedAuto.setAttribute("aria-pressed", String(sharedOverride === null));
     for (const button of sharedSwatches.children) {
         button.setAttribute("aria-pressed", String(Number(button.dataset.color) === sharedOverride));
@@ -499,7 +513,7 @@ function renderPalettes() {
     paletteReset.hidden = !editable || paletteEdits.size === 0;
     if (!result?.ok) return;
     const label = (value) => (result.system === "nes" ? `$${hex(value).toUpperCase()}`
-        : result.system === "gb" ? `shade ${value}` : `0x${hex(value, 4)}`);
+        : result.system === "gb" ? `shade ${value}` : result.system === "generic" ? `#${hex(value, 6)}` : `0x${hex(value, 4)}`);
     result.paletteColors.forEach((row, p) => {
         const tr = document.createElement("tr");
         const th = document.createElement("th");
@@ -527,7 +541,8 @@ function renderPalettes() {
         const values = document.createElement("td");
         values.className = "palette-values";
         values.textContent = result.paletteValues[p].map((value) =>
-            (result.system === "nes" ? hex(value).toUpperCase() : result.system === "gb" ? value : hex(value, 4))).join(" ");
+            (result.system === "nes" ? hex(value).toUpperCase() : result.system === "gb" ? value
+                : hex(value, result.system === "generic" ? 6 : 4))).join(" ");
         tr.append(values);
         paletteGrid.append(tr);
     });
@@ -577,13 +592,19 @@ function renderResult() {
 }
 
 function renderDownloads() {
-    downloadList.replaceChildren(...graphicsOutputNames(systemSelect.value, sourceName).map((fileName) => {
+    const fileNames = [...graphicsOutputNames(systemSelect.value, sourceName), `${sourceName}_tileset.png`];
+    downloadList.replaceChildren(...fileNames.map((fileName) => {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = fileName;
         button.disabled = outputs === null;
         button.title = outputs === null ? "Available once the conversion succeeds." : `Download ${fileName}`;
         button.addEventListener("click", () => {
+            // The tileset preview at 1×, each tile in the palette of its first use.
+            if (fileName.endsWith(".png")) {
+                bases?.tileset?.toBlob((blob) => { if (blob) downloadBlob(blob, fileName); }, "image/png");
+                return;
+            }
             const file = outputs?.find((output) => output.fileName === fileName);
             if (file) {
                 downloadBlob(new Blob([file.data], { type: "application/octet-stream" }), fileName);
@@ -602,7 +623,8 @@ function renderSelection() {
     const tx = cell % result.tilesX;
     const ty = Math.floor(cell / result.tilesX);
     const flags = result.cells.flags[cell];
-    const bytes = Array.from(result.tileBytes.subarray(selectedTile * 16, selectedTile * 16 + 16), (b) => hex(b)).join(" ");
+    const size = result.bytesPerTile;
+    const bytes = Array.from(result.tileBytes.subarray(selectedTile * size, selectedTile * size + size), (b) => hex(b)).join(" ");
     const occurrences = result.cells.tile.reduce((count, tile) => count + (tile === selectedTile ? 1 : 0), 0);
     const rows = [
         ["Tile", `${selectedTile} of ${result.tileCount} (${occurrences} use(s))`],
@@ -610,11 +632,9 @@ function renderSelection() {
         ["Palette", String(result.cells.palette[cell])],
         ["Map byte", `$${hex(result.map[cell]).toUpperCase()}`],
     ];
-    if (result.system === "gbc") {
-        rows.push(["Bank", String(flags & 4 ? 1 : 0)],
-            ["Flip", [flags & 1 ? "H" : "", flags & 2 ? "V" : ""].join("") || "none"],
-            ["Attribute", `$${hex(result.attributes[cell]).toUpperCase()}`]);
-    }
+    if (result.system === "gbc") rows.push(["Bank", String(flags & 4 ? 1 : 0)]);
+    if (result.flips) rows.push(["Flip", [flags & 1 ? "H" : "", flags & 2 ? "V" : ""].join("") || "none"]);
+    if (result.system === "gbc") rows.push(["Attribute", `$${hex(result.attributes[cell]).toUpperCase()}`]);
     rows.push(["Bytes", bytes]);
     const dl = document.createElement("dl");
     for (const [term, value] of rows) {
@@ -848,6 +868,7 @@ document.body.addEventListener("drop", (event) => {
 
 systemSelect.addEventListener("change", convert);
 autoShadesInput.addEventListener("change", convert);
+for (const control of genericInputs) control.addEventListener("change", convert);
 zoomInput.addEventListener("change", () => {
     for (const view of views) {
         if (zoomInput.value === "fit") {

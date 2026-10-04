@@ -92,17 +92,24 @@ function packNesTile(pattern) {
     return bytes;
 }
 
-// Game Boy 2bpp: each row is its low-bit byte followed by its high-bit byte.
-function packGbTile(pattern) {
-    const bytes = new Uint8Array(16);
-    for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const value = pattern[y * 8 + x];
-            bytes[y * 2] |= (value & 1) << (7 - x);
-            bytes[y * 2 + 1] |= ((value >> 1) & 1) << (7 - x);
+// SNES-style planar, 8 × bpp bytes: bit plane pairs interleaved row by row (16 bytes per pair), a lone last
+// plane as 8 plain rows. 2bpp is the Game Boy format: each row is its low-bit byte followed by its high-bit byte.
+function packPlanarTile(pattern, bpp) {
+    const bytes = new Uint8Array(8 * bpp);
+    for (let plane = 0; plane < bpp; plane++) {
+        const base = (plane >> 1) * 16 + (plane & 1);
+        const stride = (plane ^ 1) < bpp ? 2 : 1;
+        for (let y = 0; y < 8; y++) {
+            for (let x = 0; x < 8; x++) {
+                bytes[base + y * stride] |= ((pattern[y * 8 + x] >> plane) & 1) << (7 - x);
+            }
         }
     }
     return bytes;
+}
+
+function packGbTile(pattern) {
+    return packPlanarTile(pattern, 2);
 }
 
 function flipPattern(pattern, horizontal, vertical) {
@@ -190,16 +197,18 @@ function diagnostic(code, message, hint, rects = []) {
 }
 
 // input: { width, height, rgba, indexed? } where indexed is decodeIndexedPng's { palette, indexes }.
-// options: { system: "nes" | "gb" | "gbc", sharedColor?: NES PPU color overriding the automatic color 0,
+// options: { system: "nes" | "gb" | "gbc" | "generic", generic?: the generic system's rules
+// { block, colors (per palette, 2/4/8/16), maxPalettes, maxTiles, flips }; colors stay exact 24-bit RGB, sharedColor?: NES PPU color overriding the automatic color 0,
 // autoShades?: Game Boy art over 4 colors is grouped into the 4 shades by brightness instead of rejected }.
 function convertBackgroundAsset(input, options) {
     const system = options.system;
-    const target = GRAPHICS_TARGETS[system];
+    const target = system === "generic" ? { name: "Generic", ...options.generic } : GRAPHICS_TARGETS[system];
     if (target === undefined) {
         throw new Error(`Unknown target "${system}"`);
     }
     const { width, height, rgba } = input;
-    let indexed = input.indexed ?? null;
+    // Generic palettes can be any size, so indexed art is converted from its colors rather than its 4-entry groups.
+    let indexed = system === "generic" ? null : input.indexed ?? null;
     const override = system === "nes" && Number.isInteger(options.sharedColor) ? options.sharedColor : null;
     const pixelCount = width * height;
     const block = target.block;
@@ -214,7 +223,7 @@ function convertBackgroundAsset(input, options) {
     // Hardware color key per pixel: NES PPU color, source RGB (GB) or RGB555 (GBC). TRANSPARENT_KEY for alpha 0.
     const nesCache = new Map();
     const keyOfRgb = (rgb) => {
-        if (system === "gb") return rgb;
+        if (system === "gb" || system === "generic") return rgb;
         if (system === "gbc") return toRgb555(rgb);
         if (!nesCache.has(rgb)) nesCache.set(rgb, nearestNesColor(rgb, override));
         return nesCache.get(rgb);
@@ -224,6 +233,7 @@ function convertBackgroundAsset(input, options) {
         if (system === "nes") return NES_PALGEN[key];
         return system === "gbc" ? fromRgb555(key) : key;
     };
+    const colorsPerPalette = target.colors ?? 4;
     const keys = new Int32Array(pixelCount);
     const partialAlpha = new Set();
     for (let i = 0; i < pixelCount; i++) {
@@ -402,7 +412,8 @@ function convertBackgroundAsset(input, options) {
         }
         else {
             // NES: 3 colors per 16×16 block besides the shared color 0. GBC: 4 per tile, transparent pinned to index 0.
-            const capacity = system === "nes" ? 3 : 4;
+            // Generic: like GBC with its own area size and palette size.
+            const capacity = system === "nes" ? 3 : colorsPerPalette;
             const sets = new Array(blocksX * blocksY).fill(null).map(() => new Set());
             keys.forEach((key, i) => {
                 if (!(system === "nes" && key === sharedColor)) sets[blockOfPixel(i)].add(key);
@@ -411,7 +422,7 @@ function convertBackgroundAsset(input, options) {
             sets.forEach((set, index) => { if (set.size > capacity) overfull.push(index); });
             if (overfull.length > 0) {
                 return fail(diagnostic("region-colors",
-                    `${overfull.length} ${block}×${block} area(s) use more than ${system === "nes" ? "3 colors plus the shared color 0" : "4 colors"}.`,
+                    `${overfull.length} ${block}×${block} area(s) use more than ${system === "nes" ? "3 colors plus the shared color 0" : `${capacity} colors`}.`,
                     QUANTIZE_HINT, overfull.map(rectOfBlock)));
             }
             const { palettes, assignment } = mergeColorSets(sets, capacity);
@@ -425,7 +436,7 @@ function convertBackgroundAsset(input, options) {
             entries = palettes.map((set) => {
                 const sorted = [...set].filter((key) => key !== TRANSPARENT_KEY).sort(byLight);
                 const row = system === "nes" ? [sharedColor, ...sorted] : [...(set.has(TRANSPARENT_KEY) ? [TRANSPARENT_KEY] : []), ...sorted];
-                while (row.length < 4) row.push(system === "nes" ? sharedColor : 0);
+                while (row.length < colorsPerPalette) row.push(system === "nes" ? sharedColor : 0);
                 return row;
             });
             blockPalette.set(assignment);
@@ -449,7 +460,8 @@ function convertBackgroundAsset(input, options) {
     }
     else {
         paletteValues = entries.map((row) => row.map((key) => (key === TRANSPARENT_KEY ? 0 : key)));
-        paletteColors = paletteValues.map((row) => row.map((value) => (system === "nes" ? NES_PALGEN[value] : fromRgb555(value))));
+        paletteColors = paletteValues.map((row) => row.map((value) => (system === "nes" ? NES_PALGEN[value]
+            : system === "gbc" ? fromRgb555(value) : value)));
     }
 
     // Deduplicate tiles by their 2bpp pattern: the palette lives in the attributes, so it isn't part of the tile.
@@ -493,11 +505,12 @@ function convertBackgroundAsset(input, options) {
             "Reuse more identical tiles, or split the artwork into smaller screens.", extra.map(rectOfTile)));
     }
 
-    const pack = system === "nes" ? packNesTile : packGbTile;
-    const tileBytes = new Uint8Array(patterns.length * 16);
+    const bpp = Math.max(1, Math.ceil(Math.log2(colorsPerPalette)));
+    const pack = system === "nes" ? packNesTile : (pattern) => packPlanarTile(pattern, bpp);
+    const tileBytes = new Uint8Array(patterns.length * bpp * 8);
     const tilePixels = new Uint8Array(patterns.length * 64);
     patterns.forEach((pattern, i) => {
-        tileBytes.set(pack(pattern), i * 16);
+        tileBytes.set(pack(pattern), i * bpp * 8);
         tilePixels.set(pattern, i * 64);
     });
 
@@ -521,6 +534,9 @@ function convertBackgroundAsset(input, options) {
             paletteBytes[i * 2 + 1] = word >> 8;
         });
     }
+    else if (system === "generic") {
+        paletteBytes = Uint8Array.from(paletteValues.flat().flatMap((rgb) => [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255]));
+    }
 
     for (let i = 0; i < pixelCount; i++) {
         const rgb = paletteColors[blockPalette[blockOfPixel(i)]][pixelIndex[i]];
@@ -528,6 +544,8 @@ function convertBackgroundAsset(input, options) {
     }
     return Object.assign(result, {
         ok: true,
+        flips: target.flips,
+        bytesPerTile: bpp * 8,
         sharedColor,
         paletteValues,
         paletteColors,
@@ -724,7 +742,8 @@ function graphicsOutputNames(system, name) {
 // .chr: the tiles alone. NES pads to a full 4 KB pattern table (256 tiles), the size NEXXT and YYCHR load as one
 // table; Game Boy tiles stay unpadded 2bpp, ready to copy to VRAM.
 // .pal: NES is NEXXT's 16-byte background palette (4 palettes of 4 PPU colors, unused ones filled with color 0);
-// Game Boy is the 1-byte BGP register value; GBC is rgbgfx's .pal, the used palettes as little-endian RGB555.
+// Game Boy is the 1-byte BGP register value; GBC is rgbgfx's .pal, the used palettes as little-endian RGB555;
+// Generic is 3 bytes R, G, B per color, palette after palette.
 function graphicsOutputs(result, name) {
     let chr = result.tileBytes.slice();
     let pal;

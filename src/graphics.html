@@ -38,14 +38,51 @@
           <tr>
             <td>
               <label for="system">System:</label>
-              <button type="button" class="tooltip tooltip-lines" aria-label="NES: 4 palettes of 3 colors + shared color 0.&#10;One palette per 16×16 area. Up to 256 tiles.&#10;&#10;Game Boy: 4 shades for the whole image.&#10;Up to 256 tiles.&#10;&#10;Game Boy Color: 8 palettes of 4 colors.&#10;One palette per 8×8 tile. Up to 512 tiles.&#10;Flipped copies of a tile are stored once.">?</button>
+              <button type="button" class="tooltip tooltip-lines" aria-label="NES: 4 palettes of 3 colors + shared color 0.&#10;One palette per 16×16 area. Up to 256 tiles.&#10;&#10;Game Boy: 4 shades for the whole image.&#10;Up to 256 tiles.&#10;&#10;Game Boy Color: 8 palettes of 4 colors.&#10;One palette per 8×8 tile. Up to 512 tiles.&#10;Flipped copies of a tile are stored once.&#10;&#10;Generic: set the rules yourself.&#10;Duplicate tiles are always stored once.">?</button>
             </td>
             <td>
               <select autocomplete="off" id="system">
                 <option value="nes" selected>NES</option>
                 <option value="gb">Game Boy</option>
                 <option value="gbc">Game Boy Color</option>
+                <option value="generic">Generic</option>
               </select>
+            </td>
+          </tr>
+          <tr class="generic-row" hidden>
+            <td><label for="generic_block">Palette area:</label></td>
+            <td>
+              <select autocomplete="off" id="generic_block">
+                <option value="8" selected>8×8</option>
+                <option value="16">16×16</option>
+                <option value="32">32×32</option>
+              </select>
+            </td>
+          </tr>
+          <tr class="generic-row" hidden>
+            <td><label for="generic_colors">Colors/palette:</label></td>
+            <td>
+              <select autocomplete="off" id="generic_colors">
+                <option value="2">2 (1bpp)</option>
+                <option value="4" selected>4 (2bpp)</option>
+                <option value="8">8 (3bpp)</option>
+                <option value="16">16 (4bpp)</option>
+              </select>
+            </td>
+          </tr>
+          <tr class="generic-row" hidden>
+            <td><label for="generic_palettes">Palettes:</label></td>
+            <td><input autocomplete="off" type="number" id="generic_palettes" min="1" max="256" value="8"></td>
+          </tr>
+          <tr class="generic-row" hidden>
+            <td><label for="generic_tiles">Max tiles:</label></td>
+            <td><input autocomplete="off" type="number" id="generic_tiles" min="1" max="65536" value="256"></td>
+          </tr>
+          <tr class="generic-row" hidden>
+            <td colspan="2">
+              <input autocomplete="off" type="checkbox" id="generic_flips">
+              <label for="generic_flips">Detect flipped tiles</label>
+              <button type="button" class="tooltip tooltip-lines" aria-label="A tile that is a mirrored copy of another is stored once and drawn flipped.&#10;&#10;Only for hardware with tile flip bits.">?</button>
             </td>
           </tr>
           <tr id="auto_shades_row" hidden>

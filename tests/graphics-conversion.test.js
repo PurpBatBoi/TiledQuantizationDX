@@ -193,6 +193,24 @@ test("GBC reuses flipped tiles through the attribute flip bits; NES and GB don't
     assert.equal(convert(art, { system: "nes" }).tileCount, 4);
 });
 
+test("generic system follows its own rules", () => {
+    const base = (x, y) => (x === 0 && y === 0 ? RED : x === 1 ? GREEN : BLACK);
+    const art = tileStrip([base, (x, y) => base(7 - x, y)]);
+    const rules = { block: 8, colors: 8, maxPalettes: 1, maxTiles: 256, flips: true };
+    const flipped = convert(art, { system: "generic", generic: rules });
+    assert.ok(flipped.ok);
+    assert.equal(flipped.tileCount, 1);
+    assert.deepEqual(Array.from(flipped.cells.flags), [0, 1]);
+    // 8 colors: 3bpp, 24 bytes per tile; palette as RGB triples padded to 8 colors.
+    assert.equal(flipped.tileBytes.length, 24);
+    assert.equal(flipped.paletteBytes.length, 24);
+    assert.deepEqual(Array.from(flipped.paletteColors[0].slice(0, 3)), [GREEN, RED, BLACK]);
+    const plain = convert(art, { system: "generic", generic: { ...rules, flips: false } });
+    assert.equal(plain.tileCount, 2);
+    const tooFew = convert(art, { system: "generic", generic: { ...rules, colors: 2 } });
+    assert.equal(tooFew.diagnostics[0].code, "region-colors");
+});
+
 // 257 unique tiles (bit patterns in rows 0-1) that never match each other flipped: only tile corners (7, 7) are red.
 function manyTiles(count, cells) {
     const tilesX = 17;
