@@ -25,6 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Pages caches files for 10 minutes and allows no custom headers, so a browser could pair new HTML with old
+      # scripts. Every script, stylesheet, worker and wasm URL gets the commit as a query string instead.
+      - name: Cache-bust asset URLs
+        run: sed -i -E "s/\.(js|css|wasm)([\"'])/.\1?v=${GITHUB_SHA::8}\2/g" src/*.html src/js/*.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: src
