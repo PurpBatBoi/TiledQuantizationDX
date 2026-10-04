@@ -733,10 +733,33 @@ function recolorNesPalettes(result, edits) {
     };
 }
 
-// Downloads are graphics only, as plain binaries: <name>.chr (tiles) and <name>.pal (palettes). Known before
-// conversion, so the page can list them disabled.
-function graphicsOutputNames(system, name) {
-    return [`${name}.chr`, `${name}.pal`];
+// Metatiles: the converted map's unique 16×16 blocks of 2×2 cells, compared by tile, palette and flips.
+// Returns null when the map isn't whole blocks. cells: per metatile its 4 cells' indexes (top-left, top-right,
+// bottom-left, bottom-right) at first use; map: metatile per block.
+function buildMetatiles(result) {
+    const { tilesX, tilesY, cells } = result;
+    if (tilesX % 2 || tilesY % 2) return null;
+    const blocksX = tilesX / 2;
+    const map = new Uint16Array(blocksX * (tilesY / 2));
+    const metatiles = [];
+    const lookup = new Map();
+    map.forEach((_, block) => {
+        const top = Math.floor(block / blocksX) * 2 * tilesX + (block % blocksX) * 2;
+        const quad = [top, top + 1, top + tilesX, top + tilesX + 1];
+        const key = quad.map((cell) => `${cells.tile[cell]}:${cells.palette[cell]}:${cells.flags[cell]}`).join();
+        if (!lookup.has(key)) {
+            lookup.set(key, metatiles.length);
+            metatiles.push(quad);
+        }
+        map[block] = lookup.get(key);
+    });
+    return { cells: metatiles, map, blocksX };
+}
+
+// Downloads are graphics only, as plain binaries: <name>.chr (tiles) and <name>.pal (palettes), plus, with
+// metatiles, <name>_metatiles.bin and <name>_metamap.bin. Known before conversion, so the page can list them disabled.
+function graphicsOutputNames(system, name, metatiles = false) {
+    return [`${name}.chr`, `${name}.pal`, ...(metatiles ? [`${name}_metatiles.bin`, `${name}_metamap.bin`] : [])];
 }
 
 // .chr: the tiles alone. NES pads to a full 4 KB pattern table (256 tiles), the size NEXXT and YYCHR load as one
@@ -744,7 +767,10 @@ function graphicsOutputNames(system, name) {
 // .pal: NES is NEXXT's 16-byte background palette (4 palettes of 4 PPU colors, unused ones filled with color 0);
 // Game Boy is the 1-byte BGP register value; GBC is rgbgfx's .pal, the used palettes as little-endian RGB555;
 // Generic is 3 bytes R, G, B per color, palette after palette.
-function graphicsOutputs(result, name) {
+// _metatiles.bin: 8 bytes per metatile, the low bytes of its 4 tiles (TL, TR, BL, BR), then their 4 attribute
+// bytes in GBC's layout (palette bits 0-2, tile 256+ bit 3, H flip bit 5, V flip bit 6).
+// _metamap.bin: one metatile per 16×16 block, row by row; a byte each, or 16-bit little-endian past 256 metatiles.
+function graphicsOutputs(result, name, metatiles = null) {
     let chr = result.tileBytes.slice();
     let pal;
     if (result.system === "nes") {
@@ -756,5 +782,14 @@ function graphicsOutputs(result, name) {
     else {
         pal = result.system === "gb" ? Uint8Array.of(result.bgp) : result.paletteBytes.slice();
     }
-    return [{ fileName: `${name}.chr`, data: chr }, { fileName: `${name}.pal`, data: pal }];
+    const files = [{ fileName: `${name}.chr`, data: chr }, { fileName: `${name}.pal`, data: pal }];
+    if (metatiles !== null) {
+        const { cells } = result;
+        const attribute = (cell) => cells.palette[cell] | (cells.flags[cell] & 4 ? 0x08 : 0)
+            | (cells.flags[cell] & 1 ? 0x20 : 0) | (cells.flags[cell] & 2 ? 0x40 : 0);
+        const defs = Uint8Array.from(metatiles.cells.flatMap((quad) => [...quad.map((cell) => cells.tile[cell] & 255), ...quad.map(attribute)]));
+        const map = metatiles.cells.length > 256 ? new Uint8Array(metatiles.map.buffer.slice(0)) : Uint8Array.from(metatiles.map);
+        files.push({ fileName: `${name}_metatiles.bin`, data: defs }, { fileName: `${name}_metamap.bin`, data: map });
+    }
+    return files;
 }

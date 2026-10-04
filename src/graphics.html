@@ -103,6 +103,13 @@
               <div id="shared_swatches" role="group" aria-label="NES shared color 0"></div>
             </td>
           </tr>
+          <tr>
+            <td colspan="2">
+              <input autocomplete="off" type="checkbox" id="metatiles">
+              <label for="metatiles">Metatileset (16×16)</label>
+              <button type="button" class="tooltip tooltip-lines" aria-label="Also export the map's unique 16×16 blocks of 2×2 tiles.&#10;&#10;_metatiles.bin: 8 bytes per metatile, its 4 tiles (TL, TR, BL, BR), then their 4 attributes (palette bits 0-2, tile 256+ bit 3, H flip bit 5, V flip bit 6).&#10;_metamap.bin: one metatile per block, 16-bit past 256 metatiles.&#10;_metatiles.png: the metatileset, 8 per row.">?</button>
+            </td>
+          </tr>
         </table>
       </fieldset>
       <fieldset>
@@ -179,6 +186,13 @@
           <button type="button" class="tooltip tooltip-lines tooltip-below" aria-label="Every unique tile, as stored in the .chr. Each is shown in the palette of its first use.&#10;&#10;Click a tile to select it and see where it is used.&#10;Wheel: zoom. Middle-drag or Space + drag: pan.">?</button>
         </legend>
         <div class="graphics-view tileset-view"><canvas id="tileset_canvas" tabindex="0" aria-label="Deduplicated tileset. Arrow keys move the selected tile." width="0" height="0"></canvas></div>
+      </fieldset>
+      <fieldset id="metatileset_field" hidden>
+        <legend>
+          Metatileset
+          <button type="button" class="tooltip tooltip-lines tooltip-below" aria-label="Every unique 16×16 block, as stored in _metatiles.bin, 8 per row.&#10;&#10;Click a metatile to select it and see where it is used.&#10;Wheel: zoom. Middle-drag or Space + drag: pan.">?</button>
+        </legend>
+        <div class="graphics-view tileset-view"><canvas id="metatileset_canvas" tabindex="0" aria-label="Deduplicated metatileset. Arrow keys move the selected metatile." width="0" height="0"></canvas></div>
       </fieldset>
     </div>
   </div>

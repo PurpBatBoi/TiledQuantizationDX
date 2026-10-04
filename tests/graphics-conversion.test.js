@@ -7,8 +7,8 @@ const context = vm.createContext({});
 vm.runInContext(fs.readFileSync("src/js/nes-attributes.js", "utf8"), context);
 vm.runInContext(fs.readFileSync("src/js/graphics-conversion.js", "utf8"), context);
 // structuredClone moves results out of the vm realm (so deepEqual compares plainly), like the worker's postMessage.
-const exported = vm.runInContext("({ convertBackgroundAsset, graphicsOutputs, graphicsOutputNames, packNesTile, packGbTile, recolorNesPalettes, compressTiles })", context);
-const [convertBackgroundAsset, graphicsOutputs, graphicsOutputNames, packNesTile, packGbTile, recolorNesPalettes, compressTiles] =
+const exported = vm.runInContext("({ convertBackgroundAsset, graphicsOutputs, graphicsOutputNames, packNesTile, packGbTile, recolorNesPalettes, compressTiles, buildMetatiles })", context);
+const [convertBackgroundAsset, graphicsOutputs, graphicsOutputNames, packNesTile, packGbTile, recolorNesPalettes, compressTiles, buildMetatiles] =
     Object.values(exported).map((fn) => (...args) => structuredClone(fn(...args)));
 
 const BLACK = 0x000000;
@@ -449,4 +449,27 @@ test("NES palette touch-ups recolor entries without touching the tiles", () => {
     assert.deepEqual(pal, [0x01, 0x27, 0x11, 0x16, ...Array(12).fill(0x01)]);
     // No edits: the conversion's own palette.
     assert.deepEqual(Array.from(recolorNesPalettes(nes, new Map()).paletteBytes), Array.from(nes.paletteBytes));
+});
+
+test("metatiles dedupe 16×16 blocks by tile, palette and flips", () => {
+    const base = (x, y) => (x === 0 && y === 0 ? RED : x === 1 ? GREEN : BLACK);
+    const mirrored = (x, y) => base(7 - x, y);
+    // 64×16: blocks 0 and 2 match, block 1 differs only by a flipped tile, block 3 is all black.
+    const art = image(64, 16, (x, y) => {
+        const block = x >> 4;
+        const draw = block === 3 ? () => BLACK : block === 1 && x % 16 >= 8 && y < 8 ? mirrored : base;
+        return draw(x & 7, y & 7);
+    });
+    const result = convert(art, { system: "gbc" });
+    assert.ok(result.ok);
+    const metatiles = buildMetatiles(result);
+    assert.equal(metatiles.cells.length, 3);
+    assert.deepEqual(Array.from(metatiles.map), [0, 1, 0, 2]);
+    const files = graphicsOutputs(result, "bg", metatiles);
+    assert.deepEqual(files.map((f) => f.fileName), ["bg.chr", "bg.pal", "bg_metatiles.bin", "bg_metamap.bin"]);
+    const defs = Array.from(files[2].data);
+    assert.equal(defs.length, 24);
+    assert.deepEqual(defs.slice(8, 16), [0, 0, 0, 0, 0, 0x20, 0, 0]);
+    assert.deepEqual(Array.from(files[3].data), [0, 1, 0, 2]);
+    assert.equal(buildMetatiles(convert(image(24, 16, () => BLACK), { system: "gbc" })), null);
 });

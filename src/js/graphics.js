@@ -15,6 +15,7 @@ const systemSelect = document.getElementById("system");
 const sharedColorRow = document.getElementById("shared_color_row");
 const autoShadesRow = document.getElementById("auto_shades_row");
 const autoShadesInput = document.getElementById("auto_shades");
+const metatilesInput = document.getElementById("metatiles");
 const genericRows = document.querySelectorAll(".generic-row");
 const genericInputs = ["generic_block", "generic_colors", "generic_palettes", "generic_tiles", "generic_flips"].map((id) => document.getElementById(id));
 const sharedAuto = document.getElementById("shared_auto");
@@ -37,6 +38,9 @@ const downloadList = document.getElementById("download_list");
 const statusRegion = document.getElementById("graphics_status");
 const mapCanvas = document.getElementById("map_canvas");
 const tilesetCanvas = document.getElementById("tileset_canvas");
+const metatilesetField = document.getElementById("metatileset_field");
+const metatilesetCanvas = document.getElementById("metatileset_canvas");
+const METATILE_COLUMNS = 8;
 
 let sourceName = "image";
 let input = null;
@@ -48,6 +52,8 @@ let converted = null;
 const paletteEdits = new Map();
 let editingSlot = null;
 let outputs = null;
+// buildMetatiles of the result when the Metatileset option is on and the map is whole 16×16 blocks.
+let metatiles = null;
 let sharedOverride = null;
 let selectedCell = null;
 let selectedTile = null;
@@ -234,9 +240,10 @@ function receive(conversion) {
             if (firstCell[tile] < 0) firstCell[tile] = cell;
         });
     }
+    metatiles = result.ok && metatilesInput.checked ? buildMetatiles(result) : null;
     bases = buildBases();
     if (result.ok) {
-        outputs = graphicsOutputs(result, sourceName);
+        outputs = graphicsOutputs(result, sourceName, metatiles);
         if (selectedCell !== null && selectedCell < result.cells.tile.length) {
             selectedTile = result.cells.tile[selectedCell];
         }
@@ -292,7 +299,14 @@ function buildBases() {
                 tile, cells.palette[firstCell[tile]], 0);
         }
     });
-    return { map, tileset };
+    // Metatileset: METATILE_COLUMNS metatiles per row, 16×16 each.
+    const metaColumns = Math.min(METATILE_COLUMNS, metatiles?.cells.length ?? 0);
+    const metatileset = metatiles === null ? null : canvasFrom(metaColumns * 16, Math.ceil(metatiles.cells.length / METATILE_COLUMNS) * 16, (data) => {
+        metatiles.cells.forEach((quad, index) => quad.forEach((cell, corner) => drawTile(data, metaColumns * 16,
+            (index % METATILE_COLUMNS) * 16 + (corner & 1) * 8, Math.floor(index / METATILE_COLUMNS) * 16 + (corner >> 1) * 8,
+            cells.tile[cell], cells.palette[cell], cells.flags[cell])));
+    });
+    return { map, tileset, metatileset };
 }
 
 function statsText() {
@@ -300,8 +314,10 @@ function statsText() {
     const flipped = result.cells.flags.reduce((count, flags) => count + (flags & 3 ? 1 : 0), 0);
     const flipText = result.flips ? `, ${flipped} flipped reuse(s)` : "";
     const shadeText = result.autoShaded > 0 ? `, ${result.autoShaded} colors grouped into 4 shades` : "";
+    const metaText = !metatilesInput.checked ? ""
+        : metatiles === null ? ", no metatiles (width and height must be multiples of 16)" : `, ${metatiles.cells.length} metatile(s)`;
     return `${result.width}×${result.height} px, ${result.tilesX}×${result.tilesY} tiles, ${result.tileCount} unique tile(s), `
-        + `${result.paletteCount} palette(s)${flipText}${shadeText}`;
+        + `${result.paletteCount} palette(s)${flipText}${shadeText}${metaText}`;
 }
 
 // Each view is a viewport like the Attribute Editor's: the image floats on a pasteboard, the wheel zooms around the
@@ -323,7 +339,14 @@ const tilesetView = createView(tilesetCanvas, () => ({
     rects: [],
     block: 0,
 }));
-const views = [mapView, tilesetView];
+const metatilesetView = createView(metatilesetCanvas, () => ({
+    base: bases?.metatileset ?? null,
+    grid: metatiles !== null && result?.ok ? metatileGrid() : EMPTY_GRID,
+    rects: [],
+    block: 16,
+    cellSize: 16,
+}));
+const views = [mapView, tilesetView, metatilesetView];
 
 function fitView(view, base) {
     const { canvas } = view;
@@ -345,7 +368,7 @@ function zoomAt(view, level, anchorX, anchorY) {
 // grid: { columns, count, cell(i) -> { tile, palette }, selected(i), related(i) }. rects: invalid areas in pixels.
 function drawView(view) {
     const { canvas } = view;
-    const { base, grid, rects, block } = view.source();
+    const { base, grid, rects, block, cellSize = 8 } = view.source();
     const context = canvas.getContext("2d");
     canvas.width = canvas.clientWidth;
     canvas.height = canvas.clientHeight;
@@ -361,8 +384,8 @@ function drawView(view) {
     context.shadowBlur = 16;
     context.drawImage(base, ox, oy, width, height);
     context.shadowBlur = 0;
-    const size = 8 * z;
-    if (gridVisible.checked && size >= 4) {
+    const size = cellSize * z;
+    if (gridVisible.checked && 8 * z >= 4) {
         const stroke = (step, alpha) => {
             context.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
             context.lineWidth = 1;
@@ -377,7 +400,7 @@ function drawView(view) {
             }
             context.stroke();
         };
-        stroke(size, 0.3);
+        stroke(8 * z, 0.3);
         if (block > 8) stroke(block * z, 0.7);
     }
     const origin = (i) => [ox + (i % grid.columns) * size, oy + Math.floor(i / grid.columns) * size];
@@ -442,6 +465,22 @@ function cellGrid() {
     };
 }
 
+// The map block holding a cell, which is its metatile's index in metatiles.map.
+function blockOfCell(cell) {
+    return Math.floor(cell / result.tilesX / 2) * metatiles.blocksX + Math.floor((cell % result.tilesX) / 2);
+}
+
+function metatileGrid() {
+    const selected = selectedCell === null ? null : metatiles.map[blockOfCell(selectedCell)];
+    return {
+        columns: METATILE_COLUMNS,
+        count: metatiles.cells.length,
+        cell: (i) => ({ tile: i, palette: result.cells.palette[metatiles.cells[i][0]] }),
+        selected: (i) => i === selected,
+        related: (i) => selectedTile !== null && metatiles.cells[i].some((cell) => result.cells.tile[cell] === selectedTile),
+    };
+}
+
 function tileGrid() {
     return {
         columns: TILESET_COLUMNS,
@@ -475,8 +514,18 @@ function renderSharedColor() {
 // Recolors the converted palettes with the edits, then refreshes everything that shows or exports them.
 function applyPaletteEdits() {
     result = recolorNesPalettes(converted, paletteEdits);
+    refreshOutputs();
+}
+
+// Rebuilds the views and downloads from the current result, e.g. after the Metatileset option changes.
+function refreshOutputs() {
+    if (!result?.ok) {
+        render();
+        return;
+    }
+    metatiles = metatilesInput.checked ? buildMetatiles(result) : null;
     bases = buildBases();
-    outputs = graphicsOutputs(result, sourceName);
+    outputs = graphicsOutputs(result, sourceName, metatiles);
     render();
 }
 
@@ -592,17 +641,21 @@ function renderResult() {
 }
 
 function renderDownloads() {
-    const fileNames = [...graphicsOutputNames(systemSelect.value, sourceName), `${sourceName}_tileset.png`];
+    const withMetatiles = metatilesInput.checked;
+    const fileNames = [...graphicsOutputNames(systemSelect.value, sourceName, withMetatiles), `${sourceName}_tileset.png`,
+        ...(withMetatiles ? [`${sourceName}_metatiles.png`] : [])];
     downloadList.replaceChildren(...fileNames.map((fileName) => {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = fileName;
-        button.disabled = outputs === null;
-        button.title = outputs === null ? "Available once the conversion succeeds." : `Download ${fileName}`;
+        const canvas = fileName.endsWith("_tileset.png") ? "tileset" : fileName.endsWith("_metatiles.png") ? "metatileset" : null;
+        button.disabled = canvas === null ? !outputs?.some((output) => output.fileName === fileName) : !bases?.[canvas];
+        button.title = !button.disabled ? `Download ${fileName}` : outputs === null ? "Available once the conversion succeeds."
+            : "Metatiles need a width and height that are multiples of 16.";
         button.addEventListener("click", () => {
-            // The tileset preview at 1×, each tile in the palette of its first use.
-            if (fileName.endsWith(".png")) {
-                bases?.tileset?.toBlob((blob) => { if (blob) downloadBlob(blob, fileName); }, "image/png");
+            // The tileset preview at 1×, each tile in the palette of its first use, or the metatileset.
+            if (canvas !== null) {
+                bases?.[canvas]?.toBlob((blob) => { if (blob) downloadBlob(blob, fileName); }, "image/png");
                 return;
             }
             const file = outputs?.find((output) => output.fileName === fileName);
@@ -632,6 +685,7 @@ function renderSelection() {
         ["Palette", String(result.cells.palette[cell])],
         ["Map byte", `$${hex(result.map[cell]).toUpperCase()}`],
     ];
+    if (metatiles !== null) rows.push(["Metatile", `${metatiles.map[blockOfCell(cell)]} of ${metatiles.cells.length}`]);
     if (result.system === "gbc") rows.push(["Bank", String(flags & 4 ? 1 : 0)]);
     if (result.flips) rows.push(["Flip", [flags & 1 ? "H" : "", flags & 2 ? "V" : ""].join("") || "none"]);
     if (result.system === "gbc") rows.push(["Attribute", `$${hex(result.attributes[cell]).toUpperCase()}`]);
@@ -648,6 +702,7 @@ function renderSelection() {
 }
 
 function render() {
+    metatilesetField.hidden = !metatilesInput.checked;
     renderSharedColor();
     renderPalettes();
     renderResult();
@@ -665,9 +720,9 @@ function describeSelection() {
 }
 
 // Pans a view whose selection is off screen so it sits in the middle, keeping the views in step.
-function reveal(view, index, columns) {
+function reveal(view, index, columns, cellSize = 8) {
     const { canvas } = view;
-    const size = 8 * view.zoom;
+    const size = cellSize * view.zoom;
     const left = (index % columns) * size;
     const top = Math.floor(index / columns) * size;
     const x = view.offsetX + left;
@@ -691,9 +746,15 @@ function selectTile(tile) {
     afterSelection();
 }
 
+// A metatile selects its top-left cell at first use.
+function selectMetatile(index) {
+    selectCell(metatiles.cells[index][0]);
+}
+
 function afterSelection() {
     reveal(mapView, selectedCell, result.tilesX);
     reveal(tilesetView, selectedTile, TILESET_COLUMNS);
+    if (metatiles !== null) reveal(metatilesetView, metatiles.map[blockOfCell(selectedCell)], METATILE_COLUMNS, 16);
     renderSelection();
     drawViews();
     describeSelection();
@@ -707,9 +768,9 @@ function canvasPoint(canvas, event) {
     ];
 }
 
-function hitIndex(view, event, columns, count) {
+function hitIndex(view, event, columns, count, cellSize = 8) {
     const [canvasX, canvasY] = canvasPoint(view.canvas, event);
-    const size = 8 * view.zoom;
+    const size = cellSize * view.zoom;
     const x = Math.floor((canvasX - view.offsetX) / size);
     const y = Math.floor((canvasY - view.offsetY) / size);
     const index = y * columns + x;
@@ -770,6 +831,10 @@ attachViewControls(tilesetView, (event) => {
     const tile = hitIndex(tilesetView, event, TILESET_COLUMNS, result.tileCount);
     if (tile !== null) selectTile(tile);
 });
+attachViewControls(metatilesetView, (event) => {
+    const index = metatiles === null ? null : hitIndex(metatilesetView, event, METATILE_COLUMNS, metatiles.cells.length, 16);
+    if (index !== null) selectMetatile(index);
+});
 
 function setSpaceHeld(event, held) {
     if (event.code !== "Space" || event.target.matches("input, select, textarea, button")) return;
@@ -800,6 +865,11 @@ mapCanvas.addEventListener("keydown", (event) =>
     moveWithKeys(event, selectedCell, result?.tilesX, result?.cells.tile.length, selectCell));
 tilesetCanvas.addEventListener("keydown", (event) =>
     moveWithKeys(event, selectedTile, TILESET_COLUMNS, result?.tileCount, selectTile));
+metatilesetCanvas.addEventListener("keydown", (event) => {
+    if (metatiles === null) return;
+    moveWithKeys(event, selectedCell === null ? null : metatiles.map[blockOfCell(selectedCell)], METATILE_COLUMNS,
+        metatiles.cells.length, selectMetatile);
+});
 
 function downloadBlob(blob, fileName) {
     const link = document.createElement("a");
@@ -868,6 +938,7 @@ document.body.addEventListener("drop", (event) => {
 
 systemSelect.addEventListener("change", convert);
 autoShadesInput.addEventListener("change", convert);
+metatilesInput.addEventListener("change", refreshOutputs);
 for (const control of genericInputs) control.addEventListener("change", convert);
 zoomInput.addEventListener("change", () => {
     for (const view of views) {
